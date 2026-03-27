@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { Code, ChevronLeft, ChevronRight, Check, AlertCircle } from 'lucide-react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface JsonEditorPanelProps {
   jsonText: string;
@@ -109,6 +110,7 @@ export default function JsonEditorPanel({
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
   const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
+  const { t } = useLanguage();
   const [localText, setLocalText] = useState(jsonText);
   const [isDirty, setIsDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,13 +212,13 @@ export default function JsonEditorPanel({
       <div className={`editor-panel ${isOpen ? 'open' : ''}`}>
         <div className="editor-panel-header">
           <Code size={14} />
-          <span>JSON Editor</span>
+          <span>{t('JSON 编辑器', 'JSON Editor')}</span>
           {isDirty && <span className="dirty-indicator">●</span>}
           <div className="editor-panel-actions">
             {isDirty && (
-              <button className="btn-sm btn-primary" onClick={handleApply} title="应用修改 (Ctrl+S)">
+              <button className="btn-sm btn-primary" onClick={handleApply} title={t('应用修改 (Ctrl+S)', 'Apply (Ctrl+S)')}>
                 <Check size={12} />
-                <span>应用</span>
+                <span>{t('应用', 'Apply')}</span>
               </button>
             )}
           </div>

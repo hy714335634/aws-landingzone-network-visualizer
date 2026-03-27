@@ -9,6 +9,10 @@ interface TopoRegionLabelData {
 
 const TopoRegionLabelNode = memo(({ data }: NodeProps) => {
   const d = data as unknown as TopoRegionLabelData;
+  // Background-only node (empty label) — render nothing, styled via node.style
+  if (!d.label) {
+    return <div className="topo-region-bg" />;
+  }
   return (
     <div className={`topo-region-label ${d.isMain ? 'is-main' : 'is-peer'}`}>
       <Globe2 size={13} />

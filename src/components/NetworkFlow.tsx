@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -10,11 +10,13 @@ import {
 } from '@xyflow/react';
 import type { Node, Edge, NodeTypes, NodeMouseHandler } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { toSvg } from 'html-to-image';
 
 import type { NetworkConfig } from '../types/network';
 import { parseNetworkConfig, parseNetworkConfigSimplified } from '../utils/networkParser';
 import { validateNetworkConfig } from '../utils/configValidator';
 import type { ValidationMessage } from '../utils/configValidator';
+import { useLanguage } from '../i18n/LanguageContext';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import VpcNode from './nodes/VpcNode';
 import TgwNode from './nodes/TgwNode';
@@ -33,7 +35,92 @@ import FileUpload from './FileUpload';
 import JsonEditorPanel from './JsonEditorPanel';
 import Toolbar from './Toolbar';
 import type { ViewMode } from './Toolbar';
-import SidePanel from './SidePanel';
+import ResourceManager from './ResourceManager';
+import { useOverlayStore } from '../hooks/useOverlayStore';
+import { VpnNode, CgwNode, VgwNode, PrivateLinkNode } from './nodes/OverlayNodes';
+import { renderOverlayResources } from '../utils/overlayRenderer';
+
+// ============================================
+// Change tracking types & logic
+// ============================================
+export interface ChangeLogEntry {
+  type: 'added' | 'removed' | 'modified';
+  kind: string; // 'VPC', 'TGW', 'Route Table', 'Region', etc.
+  name: string;
+  jsonPath: string;
+  source: 'json' | 'overlay'; // whether this change is in JSON config or overlay/manual
+}
+
+function computeChanges(base: NetworkConfig, current: NetworkConfig): ChangeLogEntry[] {
+  const changes: ChangeLogEntry[] = [];
+  const ROOT_KEYS = ['vpcs', 'tgw', 'resolver', 'dx', 'variables'];
+
+  const S: 'json' = 'json';
+
+  // Compare VPCs
+  function diffVpcs(baseVpcs: Record<string, unknown> | undefined, curVpcs: Record<string, unknown> | undefined, prefix: string) {
+    const bk = Object.keys(baseVpcs || {});
+    const ck = Object.keys(curVpcs || {});
+    ck.forEach(k => {
+      if (!bk.includes(k)) changes.push({ type: 'added', kind: 'VPC', name: k, jsonPath: `${prefix}vpcs.${k}`, source: S });
+      else if (JSON.stringify((baseVpcs as Record<string, unknown>)[k]) !== JSON.stringify((curVpcs as Record<string, unknown>)[k]))
+        changes.push({ type: 'modified', kind: 'VPC', name: k, jsonPath: `${prefix}vpcs.${k}`, source: S });
+    });
+    bk.forEach(k => {
+      if (!ck.includes(k)) changes.push({ type: 'removed', kind: 'VPC', name: k, jsonPath: `${prefix}vpcs.${k}`, source: S });
+    });
+  }
+
+  // Compare TGW
+  function diffTgw(baseTgw: unknown, curTgw: unknown, prefix: string) {
+    if (!baseTgw && curTgw) changes.push({ type: 'added', kind: 'TGW', name: 'Transit Gateway', jsonPath: `${prefix}tgw`, source: S });
+    else if (baseTgw && !curTgw) changes.push({ type: 'removed', kind: 'TGW', name: 'Transit Gateway', jsonPath: `${prefix}tgw`, source: S });
+    else if (baseTgw && curTgw && JSON.stringify(baseTgw) !== JSON.stringify(curTgw)) {
+      changes.push({ type: 'modified', kind: 'TGW', name: 'Transit Gateway', jsonPath: `${prefix}tgw`, source: S });
+      const bt = (baseTgw as Record<string, unknown>).tables as Record<string, unknown> | undefined;
+      const ct = (curTgw as Record<string, unknown>).tables as Record<string, unknown> | undefined;
+      if (bt || ct) {
+        const btk = Object.keys(bt || {});
+        const ctk = Object.keys(ct || {});
+        ctk.forEach(k => { if (!btk.includes(k)) changes.push({ type: 'added', kind: 'Route Table', name: k, jsonPath: `${prefix}tgw.tables.${k}`, source: S }); });
+        btk.forEach(k => { if (!ctk.includes(k)) changes.push({ type: 'removed', kind: 'Route Table', name: k, jsonPath: `${prefix}tgw.tables.${k}`, source: S }); });
+      }
+    }
+  }
+
+  // Main region
+  diffVpcs(base.vpcs as Record<string, unknown>, current.vpcs as Record<string, unknown>, '');
+  diffTgw(base.tgw, current.tgw, '');
+
+  // Resolver / DX
+  if (!base.resolver && current.resolver) changes.push({ type: 'added', kind: 'Resolver', name: 'Route 53 Resolver', jsonPath: 'resolver', source: S });
+  else if (base.resolver && !current.resolver) changes.push({ type: 'removed', kind: 'Resolver', name: 'Route 53 Resolver', jsonPath: 'resolver', source: S });
+  else if (base.resolver && current.resolver && JSON.stringify(base.resolver) !== JSON.stringify(current.resolver))
+    changes.push({ type: 'modified', kind: 'Resolver', name: 'Route 53 Resolver', jsonPath: 'resolver', source: S });
+
+  if (!base.dx && current.dx) changes.push({ type: 'added', kind: 'DX', name: 'Direct Connect', jsonPath: 'dx', source: S });
+  else if (base.dx && !current.dx) changes.push({ type: 'removed', kind: 'DX', name: 'Direct Connect', jsonPath: 'dx', source: S });
+  else if (base.dx && current.dx && JSON.stringify(base.dx) !== JSON.stringify(current.dx))
+    changes.push({ type: 'modified', kind: 'DX', name: 'Direct Connect', jsonPath: 'dx', source: S });
+
+  // Peer regions
+  const allKeys = new Set([...Object.keys(base), ...Object.keys(current)]);
+  allKeys.forEach(key => {
+    if (ROOT_KEYS.includes(key)) return;
+    const bv = base[key] as Record<string, unknown> | undefined;
+    const cv = current[key] as Record<string, unknown> | undefined;
+    if (!bv && cv && typeof cv === 'object' && 'vpcs' in cv) {
+      changes.push({ type: 'added', kind: 'Region', name: key, jsonPath: key, source: S });
+    } else if (bv && !cv) {
+      changes.push({ type: 'removed', kind: 'Region', name: key, jsonPath: key, source: S });
+    } else if (bv && cv && typeof bv === 'object' && 'vpcs' in bv && typeof cv === 'object' && 'vpcs' in cv) {
+      diffVpcs(bv.vpcs as Record<string, unknown>, cv.vpcs as Record<string, unknown>, `${key}.`);
+      diffTgw(bv.tgw, cv.tgw, `${key}.`);
+    }
+  });
+
+  return changes;
+}
 
 const nodeTypes: NodeTypes = {
   vpc: VpcNode,
@@ -49,9 +136,14 @@ const nodeTypes: NodeTypes = {
   topoRegionLabel: TopoRegionLabelNode,
   topoEndpoint: TopoEndpointNode,
   topoDx: TopoDxNode,
+  overlayVpn: VpnNode,
+  overlayCgw: CgwNode,
+  overlayVgw: VgwNode,
+  overlayPrivateLink: PrivateLinkNode,
 };
 
 function NetworkFlowInner() {
+  const { lang, t } = useLanguage();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [config, setConfig] = useState<NetworkConfig | null>(null);
@@ -63,14 +155,81 @@ function NetworkFlowInner() {
   const [showValidation, setShowValidation] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+
+  const overlayStore = useOverlayStore();
 
   // 保留完整原始 JSON 对象（包含未可视化字段如安全组）
   const fullConfigRef = useRef<unknown>(null);
+  const baseConfigRef = useRef<unknown>(null); // original config snapshot for change tracking
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reactFlowInstance = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { takeSnapshot, undo, redo, canUndo, canRedo, reset } = useUndoRedo([], []);
+
+  // Auto-save to localStorage
+  const STORAGE_KEY = 'nv-saved-config';
+  useEffect(() => {
+    if (!config) return;
+    try {
+      const data = fullConfigRef.current || config;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch { /* quota exceeded or unavailable */ }
+  }, [config]);
+
+  // Restore from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved && !config) {
+        const parsed = JSON.parse(saved);
+        fullConfigRef.current = parsed;
+        baseConfigRef.current = JSON.parse(saved); // deep clone for diff
+        const networkConfig = parsed as NetworkConfig;
+        setConfig(networkConfig);
+        setShowUpload(false);
+        syncJsonText(parsed);
+        const msgs = validateNetworkConfig(networkConfig, lang);
+        setValidationMessages(msgs);
+        setShowValidation(msgs.some(m => m.level === 'error' || m.level === 'warning'));
+        const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(networkConfig, 'detailed');
+        setNodes(parsedNodes as Node[]);
+        setEdges(parsedEdges as Edge[]);
+        reset(parsedNodes as Node[], parsedEdges as Edge[]);
+        setTimeout(() => { reactFlowInstance.current?.fitView({ padding: 0.1 }); }, 200);
+      }
+    } catch { /* corrupted storage */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Change tracking: compute diff between base and current config + overlay resources
+  const changeLog = useMemo(() => {
+    const entries: ChangeLogEntry[] = [];
+    if (config) {
+      const base = baseConfigRef.current as Record<string, unknown> | null;
+      if (base) {
+        entries.push(...computeChanges(base as NetworkConfig, config));
+      }
+    }
+    // Overlay resources are always "added" (manual operations)
+    overlayStore.resources.forEach(r => {
+      const cfg = r.config as Record<string, string>;
+      const typeLabel = r.type === 'vpn' ? 'Site-to-Site VPN'
+        : r.type === 'cgw' ? 'Customer Gateway'
+        : r.type === 'vgw' ? 'Virtual Private GW'
+        : r.type === 'privatelink' ? 'PrivateLink'
+        : r.type.toUpperCase();
+      entries.push({
+        type: 'added',
+        kind: typeLabel,
+        name: cfg.name || r.type,
+        jsonPath: r.id, // overlay ID used for focus
+        source: 'overlay',
+      });
+    });
+    return entries;
+  }, [config, overlayStore.resources]);
 
   const parseConfig = useCallback((networkConfig: NetworkConfig, mode: ViewMode) => {
     if (mode === 'simplified') {
@@ -90,7 +249,7 @@ function NetworkFlowInner() {
     setConfig(networkConfig);
     syncJsonText(fullConfigRef.current);
 
-    const msgs = validateNetworkConfig(networkConfig);
+    const msgs = validateNetworkConfig(networkConfig, lang);
     setValidationMessages(msgs);
     if (msgs.some(m => m.level === 'error' || m.level === 'warning')) {
       setShowValidation(true);
@@ -106,7 +265,20 @@ function NetworkFlowInner() {
     setTimeout(() => {
       reactFlowInstance.current?.fitView({ padding: 0.1 });
     }, 100);
-  }, [parseConfig, viewMode, setNodes, setEdges, reset, syncJsonText]);
+  }, [parseConfig, viewMode, setNodes, setEdges, reset, syncJsonText, lang]);
+
+  // Overlay nodes/edges — merge into canvas when overlay resources change
+  useEffect(() => {
+    if (!config || overlayStore.resources.length === 0) return;
+    const baseNodes = nodes.filter(n => !n.id.startsWith('overlay-'));
+    const baseEdges = edges.filter(e => !e.id.startsWith('overlay-'));
+    const { nodes: overlayNodes, edges: overlayEdges } = renderOverlayResources(
+      overlayStore.resources, baseNodes, overlayStore.selectedOverlayId
+    );
+    setNodes([...baseNodes, ...overlayNodes] as Node[]);
+    setEdges([...baseEdges, ...overlayEdges] as Edge[]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayStore.resources, overlayStore.selectedOverlayId]);
 
   // 键盘快捷键
   useEffect(() => {
@@ -134,6 +306,7 @@ function NetworkFlowInner() {
   // 文件加载
   const handleFileLoad = useCallback((newConfig: unknown) => {
     const networkConfig = newConfig as NetworkConfig;
+    baseConfigRef.current = JSON.parse(JSON.stringify(newConfig)); // snapshot for change tracking
     setShowUpload(false);
     applyConfig(networkConfig, newConfig);
   }, [applyConfig]);
@@ -147,7 +320,7 @@ function NetworkFlowInner() {
       setConfig(networkConfig);
       setJsonText(text);
 
-      const msgs = validateNetworkConfig(networkConfig);
+      const msgs = validateNetworkConfig(networkConfig, lang);
       setValidationMessages(msgs);
       setShowValidation(msgs.some(m => m.level === 'error' || m.level === 'warning'));
 
@@ -163,7 +336,7 @@ function NetworkFlowInner() {
     } catch (e) {
       return (e as Error).message;
     }
-  }, [parseConfig, viewMode, setNodes, setEdges, reset]);
+  }, [parseConfig, viewMode, setNodes, setEdges, reset, lang]);
 
   // 下载完整 JSON（包含未可视化字段）
   const handleDownload = useCallback(() => {
@@ -177,6 +350,34 @@ function NetworkFlowInner() {
     a.click();
     URL.revokeObjectURL(url);
   }, [config]);
+
+  const handleExportSvg = useCallback(() => {
+    const el = document.querySelector('.react-flow') as HTMLElement;
+    if (!el) return;
+    // Hide controls/minimap for clean export
+    const controls = el.querySelectorAll('.react-flow__controls, .react-flow__minimap');
+    controls.forEach(c => (c as HTMLElement).style.display = 'none');
+    toSvg(el, {
+      filter: (node) => {
+        // Exclude interactive overlays
+        if (node instanceof HTMLElement) {
+          const cls = node.className || '';
+          if (typeof cls === 'string' && (cls.includes('react-flow__controls') || cls.includes('react-flow__minimap'))) return false;
+        }
+        return true;
+      },
+      backgroundColor: '#0f172a',
+    }).then((dataUrl) => {
+      controls.forEach(c => (c as HTMLElement).style.display = '');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `network-${viewMode === 'simplified' ? 'topology' : 'detailed'}.svg`;
+      a.click();
+    }).catch(() => {
+      controls.forEach(c => (c as HTMLElement).style.display = '');
+      alert(t('SVG 导出失败', 'SVG export failed'));
+    });
+  }, [viewMode, t]);
 
   const handleUploadClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -207,7 +408,7 @@ function NetworkFlowInner() {
           const json = JSON.parse(event.target?.result as string);
           handleFileLoad(json);
         } catch {
-          alert('刷新失败：无法解析 JSON 文件');
+          alert(t('刷新失败：无法解析 JSON 文件', 'Refresh failed: unable to parse JSON'));
         }
       };
       reader.readAsText(sourceFile);
@@ -241,6 +442,56 @@ function NetworkFlowInner() {
     if (state) { setNodes(state.nodes as Node[]); setEdges(state.edges as Edge[]); }
   }, [redo, setNodes, setEdges]);
 
+  // Focus canvas on a node matching a jsonPath
+  const focusNodeByPath = useCallback((jsonPath: string) => {
+    const rf = reactFlowInstance.current;
+    if (!rf) return;
+    const allNodes = rf.getNodes() as Node[];
+    const target = allNodes.find((n: Node) => (n.data as Record<string, unknown>)?.jsonPath === jsonPath);
+    if (!target) return;
+    // Get node center in flow coordinates
+    const w = (target.style?.width as number) || (target.measured?.width) || 200;
+    const h = (target.style?.height as number) || (target.measured?.height) || 100;
+    const cx = (target.position?.x ?? 0) + w / 2;
+    const cy = (target.position?.y ?? 0) + h / 2;
+    // For child nodes, add parent position
+    let offsetX = 0, offsetY = 0;
+    if (target.parentId) {
+      const parent = allNodes.find((n: Node) => n.id === target.parentId);
+      if (parent) {
+        offsetX = parent.position?.x ?? 0;
+        offsetY = parent.position?.y ?? 0;
+        if (parent.parentId) {
+          const grandparent = allNodes.find((n: Node) => n.id === parent.parentId);
+          if (grandparent) {
+            offsetX += grandparent.position?.x ?? 0;
+            offsetY += grandparent.position?.y ?? 0;
+          }
+        }
+      }
+    }
+    rf.setCenter(cx + offsetX, cy + offsetY, { zoom: rf.getZoom(), duration: 400 });
+    // Trigger highlight animation
+    setHighlightedNodeId(target.id);
+    setTimeout(() => setHighlightedNodeId(null), 1200);
+  }, []);
+
+  // Focus canvas on a node by its ID (for overlay nodes)
+  const focusNodeById = useCallback((nodeId: string) => {
+    const rf = reactFlowInstance.current;
+    if (!rf) return;
+    const allNodes = rf.getNodes() as Node[];
+    const target = allNodes.find((n: Node) => n.id === nodeId);
+    if (!target) return;
+    const w = (target.style?.width as number) || (target.measured?.width) || 180;
+    const h = (target.style?.height as number) || (target.measured?.height) || 80;
+    const cx = (target.position?.x ?? 0) + w / 2;
+    const cy = (target.position?.y ?? 0) + h / 2;
+    rf.setCenter(cx, cy, { zoom: rf.getZoom(), duration: 400 });
+    setHighlightedNodeId(target.id);
+    setTimeout(() => setHighlightedNodeId(null), 1200);
+  }, []);
+
   // 节点点击 → 联动编辑器
   const handleNodeClick: NodeMouseHandler = useCallback((_event, node) => {
     const jp = (node.data as Record<string, unknown>)?.jsonPath as string | undefined;
@@ -253,9 +504,10 @@ function NetworkFlowInner() {
     }
   }, [editorOpen]);
 
-  // 画布空白处点击 → 清除选中
+  // 画布空白处点击 → 清除选中 + 收起编辑器
   const handlePaneClick = useCallback(() => {
     setSelectedPath(null);
+    setEditorOpen(false);
   }, []);
 
   const handleConfigUpdate = useCallback((newConfig: NetworkConfig) => {
@@ -268,6 +520,7 @@ function NetworkFlowInner() {
         onUpload={handleUploadClick}
         onEdit={() => setEditorOpen(!editorOpen)}
         onDownload={handleDownload}
+        onExportSvg={handleExportSvg}
         onRefresh={handleRefresh}
         onZoomIn={() => reactFlowInstance.current?.zoomIn()}
         onZoomOut={() => reactFlowInstance.current?.zoomOut()}
@@ -279,6 +532,7 @@ function NetworkFlowInner() {
         hasConfig={!!config}
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
+        editorOpen={editorOpen}
       />
 
       <input
@@ -302,9 +556,24 @@ function NetworkFlowInner() {
         />
       )}
 
-      <SidePanel
+      <ResourceManager
         config={config}
         onConfigUpdate={handleConfigUpdate}
+        selectedPath={selectedPath}
+        onSelectPath={(path) => {
+          if (path?.startsWith('overlay-')) {
+            // Overlay node: focus by ID, select in overlay store
+            overlayStore.selectOverlay(path);
+            focusNodeById(path);
+          } else {
+            setSelectedPath(path);
+            if (path && !editorOpen) setEditorOpen(true);
+            if (path) focusNodeByPath(path);
+          }
+        }}
+        onFocusOverlay={focusNodeById}
+        overlayStore={overlayStore}
+        changeLog={changeLog}
       />
 
       {showUpload && !config ? (
@@ -312,7 +581,11 @@ function NetworkFlowInner() {
       ) : (
         <div className="react-flow-wrapper">
           <ReactFlow
-            nodes={nodes}
+            nodes={highlightedNodeId
+              ? nodes.map(n => n.id === highlightedNodeId
+                ? { ...n, className: `${n.className || ''} node-highlight`.trim() }
+                : n)
+              : nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -352,16 +625,16 @@ function NetworkFlowInner() {
       {showValidation && validationMessages.length > 0 && (
         <div className="validation-panel">
           <div className="validation-header">
-            <span>配置校验</span>
+            <span>{t('配置校验', 'Validation')}</span>
             <span className="validation-counts">
               {validationMessages.filter(m => m.level === 'error').length > 0 && (
-                <span className="count-error">{validationMessages.filter(m => m.level === 'error').length} 错误</span>
+                <span className="count-error">{validationMessages.filter(m => m.level === 'error').length} {t('错误', 'errors')}</span>
               )}
               {validationMessages.filter(m => m.level === 'warning').length > 0 && (
-                <span className="count-warning">{validationMessages.filter(m => m.level === 'warning').length} 警告</span>
+                <span className="count-warning">{validationMessages.filter(m => m.level === 'warning').length} {t('警告', 'warnings')}</span>
               )}
               {validationMessages.filter(m => m.level === 'info').length > 0 && (
-                <span className="count-info">{validationMessages.filter(m => m.level === 'info').length} 提示</span>
+                <span className="count-info">{validationMessages.filter(m => m.level === 'info').length} {t('提示', 'info')}</span>
               )}
             </span>
             <button className="validation-close" onClick={() => setShowValidation(false)}>✕</button>

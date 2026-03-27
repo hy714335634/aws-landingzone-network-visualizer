@@ -1,11 +1,14 @@
 import { useCallback } from 'react';
 import { Upload, FileJson } from 'lucide-react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface FileUploadProps {
   onFileLoad: (config: unknown) => void;
 }
 
 export default function FileUpload({ onFileLoad }: FileUploadProps) {
+  const { t } = useLanguage();
+
   const readFile = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -13,11 +16,11 @@ export default function FileUpload({ onFileLoad }: FileUploadProps) {
         const json = JSON.parse(event.target?.result as string);
         onFileLoad(json);
       } catch {
-        alert('Invalid JSON file');
+        alert(t('JSON 文件格式无效', 'Invalid JSON file'));
       }
     };
     reader.readAsText(file);
-  }, [onFileLoad]);
+  }, [onFileLoad, t]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -51,11 +54,11 @@ export default function FileUpload({ onFileLoad }: FileUploadProps) {
       onDragOver={handleDragOver}
     >
       <FileJson size={48} className="upload-icon" />
-      <h3>Upload Network Configuration</h3>
-      <p>Drag and drop a JSON file here, or click to select</p>
+      <h3>{t('上传网络配置', 'Upload Network Configuration')}</h3>
+      <p>{t('拖拽 JSON 文件到此处，或点击选择文件', 'Drag and drop a JSON file here, or click to select')}</p>
       <label className="upload-button">
         <Upload size={18} />
-        <span>Select File</span>
+        <span>{t('选择文件', 'Select File')}</span>
         <input
           type="file"
           accept=".json,application/json"

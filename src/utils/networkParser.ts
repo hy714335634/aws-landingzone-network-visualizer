@@ -557,14 +557,16 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
 // ============================================
 
 const TOPO = {
-  VPC_W: 160, VPC_H: 60,
-  TGW_W: 160, TGW_H: 78,
+  VPC_W: 170, VPC_H: 64,
+  TGW_W: 170, TGW_H: 82,
   ACC_W: 120, ACC_H: 30,
   EP_W: 140, EP_H: 24, EP_TAG_H: 18,
-  REGION_LABEL_W: 180, REGION_LABEL_H: 28,
-  VPC_GAP_X: 200,
-  TGW_GAP_BELOW: 60,
-  PEER_Y_GAP: 100,
+  REGION_LABEL_W: 190, REGION_LABEL_H: 30,
+  VPC_GAP_X: 240,
+  TGW_GAP_BELOW: 80,
+  PEER_Y_GAP: 130,
+  BG_PAD_MAIN: 45,
+  BG_PAD_PEER: 30,
 };
 
 // 地域分类和颜色
@@ -591,7 +593,7 @@ function classifyRegion(regionId: string): GeoGroup {
  * 计算一个对等区域在拓扑视图中需要的宽度
  */
 function estimatePeerRegionWidth(vpcCount: number): number {
-  return Math.max(TOPO.VPC_W + 40, vpcCount * TOPO.VPC_GAP_X);
+  return Math.max(TOPO.VPC_W + 60, vpcCount * TOPO.VPC_GAP_X);
 }
 
 export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: Node[]; edges: Edge[] } {
@@ -622,34 +624,69 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
   // 计算主区域中心 X 坐标
   const mainCenterX = (mainVpcs.length - 1) * TOPO.VPC_GAP_X / 2 + TOPO.VPC_W / 2;
 
-  // 区域标签 — 使用推断的区域名称
+  // 预计算布局坐标（绝对坐标系）
+  const vpcY = 0;
+  const maxBottomY = vpcY + TOPO.VPC_H;
+  const tgwY = hasTgw ? maxBottomY + TOPO.TGW_GAP_BELOW : maxBottomY;
+  const tgwBottomY = hasTgw ? tgwY + TOPO.TGW_H : maxBottomY;
+
+  // 预计算背景尺寸
+  const mainGeo = classifyRegion(mainRegionId);
+  const mainGeoColor = GEO_COLORS[mainGeo];
+  const pad = TOPO.BG_PAD_MAIN;
+  const mainTotalWidth = mainVpcs.length * TOPO.VPC_GAP_X;
+  const dxExtra = (config.dx?.enabled && hasTgw) ? TOPO.TGW_W + 60 : 0;
+  const mainBgWidth = Math.max(mainTotalWidth, mainCenterX + TOPO.TGW_W / 2 + dxExtra) + pad * 2;
+  const mainBgHeight = tgwBottomY + pad + 60 + 10;
+  const mainBgLeft = -pad;
+  const mainBgTop = -60 - pad;
+  const bgId = `topo-geo-bg-${mainRegion.id}`;
+
+  // 背景节点必须在子节点之前创建（ReactFlow 要求父节点先于子节点）
+  nodes.push({
+    id: bgId,
+    type: 'topoRegionLabel',
+    position: { x: mainBgLeft, y: mainBgTop },
+    data: { label: '', isMain: true },
+    draggable: true,
+    style: {
+      width: mainBgWidth, height: mainBgHeight,
+      background: mainGeoColor.bg, border: `1px solid ${mainGeoColor.border}`,
+      borderRadius: '16px', opacity: 0.5,
+    },
+    zIndex: -1,
+  });
+
+  // 坐标转换：绝对坐标 → 相对于背景的坐标
+  const mainRelX = (absX: number) => absX - mainBgLeft;
+  const mainRelY = (absY: number) => absY - mainBgTop;
+
+  // 区域标签
   const mainDisplayName = inferMainRegionDisplayName(config);
   nodes.push({
     id: `topo-label-${mainRegion.id}`,
     type: 'topoRegionLabel',
-    position: { x: mainCenterX - TOPO.REGION_LABEL_W / 2, y: -60 },
+    parentId: bgId,
+    extent: 'parent' as const,
+    position: { x: mainRelX(mainCenterX - TOPO.REGION_LABEL_W / 2), y: mainRelY(-60) },
     data: { label: mainDisplayName, isMain: true },
     style: { width: TOPO.REGION_LABEL_W },
   });
 
-  // VPC 行 (y=0)，组件内嵌在 VPC 节点中
-  const vpcY = 0;
-  let maxBottomY = vpcY + TOPO.VPC_H;
-
+  // VPC 行
   mainVpcs.forEach(([vpcName, vpcConfig], i) => {
     const vpcId = `${mainRegion.id}-${vpcName}`;
     const vpcX = i * TOPO.VPC_GAP_X;
-
-    // 账号标识：有 accounts 显示第一个账号 ID，无则显示 DEFAULT
     const accountLabel = vpcConfig.accounts?.length ? vpcConfig.accounts[0] : 'DEFAULT';
-
-    // VPC 节点（组件和账号内嵌）
     const hasComps = vpcConfig.igw?.enabled || vpcConfig.nat?.enabled || vpcConfig.nfw?.enabled || vpcConfig.gwlb?.enabled;
-    const vpcH = TOPO.VPC_H + (hasComps ? 8 : 0) + 16; // 额外高度给账号行
+    const vpcH = TOPO.VPC_H + (hasComps ? 8 : 0) + 16;
+
     nodes.push({
       id: vpcId,
       type: 'topoVpc',
-      position: { x: vpcX, y: vpcY },
+      parentId: bgId,
+      extent: 'parent' as const,
+      position: { x: mainRelX(vpcX), y: mainRelY(vpcY) },
       data: {
         label: vpcName, cidr: vpcConfig.cidr,
         isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint,
@@ -661,7 +698,6 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       style: { width: TOPO.VPC_W, height: vpcH },
     });
 
-    // TGW ↔ VPC 连线
     if (hasTgw && hasIntraSubnet(vpcConfig.subnets)) {
       edges.push({
         id: `${mainRegion.id}-tgw-${vpcName}`,
@@ -673,29 +709,30 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
     }
   });
 
-  // TGW 节点居中在 VPC 行下方
-  let tgwBottomY = maxBottomY;
+  // TGW 节点
   if (hasTgw) {
     const tgwX = mainCenterX - TOPO.TGW_W / 2;
-    const tgwY = maxBottomY + TOPO.TGW_GAP_BELOW;
-    tgwBottomY = tgwY + TOPO.TGW_H;
     nodes.push({
       id: `${mainRegion.id}-tgw`,
       type: 'topoTgw',
-      position: { x: tgwX, y: tgwY },
+      parentId: bgId,
+      extent: 'parent' as const,
+      position: { x: mainRelX(tgwX), y: mainRelY(tgwY) },
       data: { label: 'TGW', asn: mainRegion.tgw!.asn, cidr: mainRegion.tgw!.cidr, peer: false, jsonPath: tgwJsonPath(mainRegion.id) },
       style: { width: TOPO.TGW_W, height: TOPO.TGW_H },
     });
   }
 
-  // DX 节点（仅主区域，在 TGW 右侧）
+  // DX 节点
   if (config.dx?.enabled && hasTgw) {
     const dxX = mainCenterX + TOPO.TGW_W / 2 + 40;
     const dxY = tgwBottomY - TOPO.TGW_H;
     nodes.push({
       id: `${mainRegion.id}-dx`,
       type: 'topoDx',
-      position: { x: dxX, y: dxY },
+      parentId: bgId,
+      extent: 'parent' as const,
+      position: { x: mainRelX(dxX), y: mainRelY(dxY) },
       data: { asn: config.dx.asn, prefixes: config.dx.prefixes },
       style: { width: TOPO.TGW_W, height: 60 },
     });
@@ -711,32 +748,9 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
     });
   }
 
-  // 主区域背景框（包裹所有主区域节点）
-  const mainGeo = classifyRegion(mainRegionId);
-  const mainGeoColor = GEO_COLORS[mainGeo];
-  const mainBgPad = 30;
-  const mainTotalWidth = mainVpcs.length * TOPO.VPC_GAP_X;
-  const mainBgLeft = -mainBgPad;
-  const mainBgTop = -60 - mainBgPad;
-  const mainBgWidth = mainTotalWidth + mainBgPad * 2;
-  const mainBgHeight = tgwBottomY + mainBgPad - mainBgTop + 10;
-  nodes.push({
-    id: `topo-geo-bg-${mainRegion.id}`,
-    type: 'topoRegionLabel',
-    position: { x: mainBgLeft, y: mainBgTop },
-    data: { label: '', isMain: true },
-    style: {
-      width: mainBgWidth, height: mainBgHeight,
-      background: mainGeoColor.bg, border: `1px solid ${mainGeoColor.border}`,
-      borderRadius: '16px', opacity: 0.5,
-    },
-    zIndex: -1,
-  });
-
-  // ---------- 对等区域（按地域分组，动态布局） ----------
+  // ---------- 对等区域（按地域分组，动态布局，可整体拖动） ----------
   const otherRegions = regions.filter(r => !r.isMain);
   if (otherRegions.length > 0) {
-    // 按地域分组
     const geoGroups = new Map<GeoGroup, typeof otherRegions>();
     otherRegions.forEach(region => {
       const geo = classifyRegion(region.id);
@@ -744,54 +758,75 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       geoGroups.get(geo)!.push(region);
     });
 
-    let peerY = tgwBottomY + TOPO.PEER_Y_GAP;
+    // peerY is in absolute coordinates; will be converted to relative to main bg
+    let peerYAbs = mainBgTop + mainBgHeight + TOPO.PEER_Y_GAP;
 
     for (const [geo, groupRegions] of geoGroups) {
-      const rowGap = 80;
+      const rowGap = 100;
       const geoColor = GEO_COLORS[geo];
       const widths = groupRegions.map(r => estimatePeerRegionWidth(Object.keys(r.vpcs).length));
       const totalRowWidth = widths.reduce((s, w) => s + w, 0) + (widths.length - 1) * rowGap;
-      let regionX = mainCenterX - totalRowWidth / 2;
+      let regionXAbs = mainCenterX - totalRowWidth / 2;
       let rowMaxHeight = 0;
 
       groupRegions.forEach((region, ri) => {
         const peerVpcs = Object.entries(region.vpcs);
         const peerHasTgw = region.tgw?.enabled;
         const regionWidth = widths[ri];
-        const regionCenterX = regionX + regionWidth / 2;
+        const regionCenterX = regionXAbs + regionWidth / 2;
+        const pp = TOPO.BG_PAD_PEER;
 
-        // 地域背景框
-        const bgPad = 20;
-        const bgH = TOPO.REGION_LABEL_H + 16 + TOPO.TGW_H + 30 + TOPO.VPC_H + 20 + bgPad * 2;
+        // Compute max VPC height for accurate background sizing
+        let maxVpcH = TOPO.VPC_H + 16;
+        peerVpcs.forEach(([, vc]) => {
+          const hasComps = vc.igw?.enabled || vc.nat?.enabled || vc.nfw?.enabled || vc.gwlb?.enabled;
+          maxVpcH = Math.max(maxVpcH, TOPO.VPC_H + (hasComps ? 8 : 0) + 16);
+        });
+
+        // Dynamic background height
+        const contentH = TOPO.REGION_LABEL_H + 20 + (peerHasTgw ? TOPO.TGW_H + 36 : 0) + maxVpcH + 16;
+        const bgH = contentH + pp * 2;
+
+        // Background as draggable parent node
+        const peerBgId = `topo-geo-bg-${region.id}`;
         nodes.push({
-          id: `topo-geo-bg-${region.id}`,
+          id: peerBgId,
           type: 'topoRegionLabel',
-          position: { x: regionX - bgPad, y: peerY - bgPad },
+          position: { x: regionXAbs - pp, y: peerYAbs },
           data: { label: '', isMain: false },
+          draggable: true,
           style: {
-            width: regionWidth + bgPad * 2, height: bgH,
+            width: regionWidth + pp * 2, height: bgH,
             background: geoColor.bg, border: `1px solid ${geoColor.border}`,
             borderRadius: '12px', opacity: 0.6,
           },
           zIndex: -1,
         });
 
+        // All peer region content: positions RELATIVE to background node
+        const relX = (absX: number) => absX - (regionXAbs - pp);
+        const relY = (absY: number) => absY - peerYAbs;
+
         // 区域标签
         nodes.push({
           id: `topo-label-${region.id}`,
           type: 'topoRegionLabel',
-          position: { x: regionCenterX - TOPO.REGION_LABEL_W / 2, y: peerY },
+          parentId: peerBgId,
+          extent: 'parent' as const,
+          position: { x: relX(regionCenterX - TOPO.REGION_LABEL_W / 2), y: relY(peerYAbs + pp) },
           data: { label: region.name.toUpperCase(), isMain: false },
           style: { width: TOPO.REGION_LABEL_W },
         });
 
         // TGW
+        const tgwYAbs = peerYAbs + pp + TOPO.REGION_LABEL_H + 20;
         if (peerHasTgw) {
-          const tgwX = regionCenterX - TOPO.TGW_W / 2;
-          const tgwY = peerY + TOPO.REGION_LABEL_H + 16;
+          const tgwXAbs = regionCenterX - TOPO.TGW_W / 2;
           nodes.push({
             id: `${region.id}-tgw`, type: 'topoTgw',
-            position: { x: tgwX, y: tgwY },
+            parentId: peerBgId,
+            extent: 'parent' as const,
+            position: { x: relX(tgwXAbs), y: relY(tgwYAbs) },
             data: { label: 'TGW', asn: region.tgw!.asn, cidr: region.tgw!.cidr, peer: region.tgw!.peer, jsonPath: tgwJsonPath(region.id) },
             style: { width: TOPO.TGW_W, height: TOPO.TGW_H },
           });
@@ -812,19 +847,21 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
         }
 
         // VPCs
-        const vpcStartX = regionCenterX - (peerVpcs.length * TOPO.VPC_GAP_X) / 2 + (TOPO.VPC_GAP_X - TOPO.VPC_W) / 2;
-        const peerVpcY = peerY + TOPO.REGION_LABEL_H + 16 + TOPO.TGW_H + 30;
+        const vpcStartXAbs = regionCenterX - (peerVpcs.length * TOPO.VPC_GAP_X) / 2 + (TOPO.VPC_GAP_X - TOPO.VPC_W) / 2;
+        const peerVpcYAbs = tgwYAbs + (peerHasTgw ? TOPO.TGW_H + 36 : 0);
 
         peerVpcs.forEach(([vpcName, vpcConfig], vi) => {
           const vpcId = `${region.id}-${vpcName}`;
-          const vpcX = vpcStartX + vi * TOPO.VPC_GAP_X;
+          const vpcXAbs = vpcStartXAbs + vi * TOPO.VPC_GAP_X;
           const hasComps = vpcConfig.igw?.enabled || vpcConfig.nat?.enabled || vpcConfig.nfw?.enabled || vpcConfig.gwlb?.enabled;
           const accountLabel = vpcConfig.accounts?.length ? vpcConfig.accounts[0] : 'DEFAULT';
           const vpcH = TOPO.VPC_H + (hasComps ? 8 : 0) + 16;
 
           nodes.push({
             id: vpcId, type: 'topoVpc',
-            position: { x: vpcX, y: peerVpcY },
+            parentId: peerBgId,
+            extent: 'parent' as const,
+            position: { x: relX(vpcXAbs), y: relY(peerVpcYAbs) },
             data: {
               label: vpcName, cidr: vpcConfig.cidr,
               isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint,
@@ -848,10 +885,10 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
         });
 
         rowMaxHeight = Math.max(rowMaxHeight, bgH);
-        regionX += regionWidth + rowGap;
+        regionXAbs += regionWidth + rowGap;
       });
 
-      peerY += rowMaxHeight + 40;
+      peerYAbs += rowMaxHeight + 60;
     }
   }
 

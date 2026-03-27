@@ -1,4 +1,5 @@
-import { Upload, Edit, Download, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, RefreshCw, LayoutGrid, List } from 'lucide-react';
+import { Upload, Edit, Download, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, RefreshCw, LayoutGrid, List, Image } from 'lucide-react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export type ViewMode = 'detailed' | 'simplified';
 
@@ -6,6 +7,7 @@ interface ToolbarProps {
   onUpload: () => void;
   onEdit: () => void;
   onDownload: () => void;
+  onExportSvg: () => void;
   onRefresh: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -17,12 +19,14 @@ interface ToolbarProps {
   hasConfig: boolean;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  editorOpen?: boolean;
 }
 
 export default function Toolbar({
   onUpload,
   onEdit,
   onDownload,
+  onExportSvg,
   onRefresh,
   onZoomIn,
   onZoomOut,
@@ -34,23 +38,34 @@ export default function Toolbar({
   hasConfig,
   viewMode,
   onViewModeChange,
+  editorOpen,
 }: ToolbarProps) {
+  const { t } = useLanguage();
+
   return (
-    <div className="toolbar">
+    <div className={`toolbar ${editorOpen ? 'toolbar-shifted' : ''}`}>
       <div className="toolbar-group">
-        <button className="toolbar-btn" onClick={onUpload} title="上传 JSON">
-          <Upload size={18} />
+        <button className="toolbar-btn toolbar-btn-labeled" onClick={onUpload}>
+          <Upload size={16} />
+          <span className="toolbar-label">{t('上传', 'Upload')}</span>
         </button>
         {hasConfig && (
           <>
-            <button className="toolbar-btn" onClick={onRefresh} title="刷新 (重新加载)">
-              <RefreshCw size={18} />
+            <button className="toolbar-btn toolbar-btn-labeled" onClick={onRefresh}>
+              <RefreshCw size={16} />
+              <span className="toolbar-label">{t('刷新', 'Refresh')}</span>
             </button>
-            <button className="toolbar-btn" onClick={onEdit} title="编辑 JSON">
-              <Edit size={18} />
+            <button className="toolbar-btn toolbar-btn-labeled" onClick={onEdit}>
+              <Edit size={16} />
+              <span className="toolbar-label">JSON</span>
             </button>
-            <button className="toolbar-btn" onClick={onDownload} title="下载 JSON">
-              <Download size={18} />
+            <button className="toolbar-btn toolbar-btn-labeled" onClick={onDownload}>
+              <Download size={16} />
+              <span className="toolbar-label">{t('下载', 'Save')}</span>
+            </button>
+            <button className="toolbar-btn toolbar-btn-labeled" onClick={onExportSvg}>
+              <Image size={16} />
+              <span className="toolbar-label">SVG</span>
             </button>
           </>
         )}
@@ -62,18 +77,16 @@ export default function Toolbar({
             <button
               className={`view-toggle-btn ${viewMode === 'detailed' ? 'active' : ''}`}
               onClick={() => onViewModeChange('detailed')}
-              title="详细视图"
             >
               <List size={14} />
-              <span>详细</span>
+              <span>{t('详细', 'Detail')}</span>
             </button>
             <button
               className={`view-toggle-btn ${viewMode === 'simplified' ? 'active' : ''}`}
               onClick={() => onViewModeChange('simplified')}
-              title="简化视图"
             >
               <LayoutGrid size={14} />
-              <span>拓扑</span>
+              <span>{t('拓扑', 'Topo')}</span>
             </button>
           </div>
         </div>
@@ -82,33 +95,33 @@ export default function Toolbar({
       {hasConfig && (
         <div className="toolbar-group">
           <button
-            className={`toolbar-btn ${!canUndo ? 'disabled' : ''}`}
+            className={`toolbar-btn toolbar-btn-labeled ${!canUndo ? 'disabled' : ''}`}
             onClick={onUndo}
             disabled={!canUndo}
-            title="撤销 (Ctrl+Z)"
           >
-            <Undo2 size={18} />
+            <Undo2 size={16} />
+            <span className="toolbar-label">{t('撤销', 'Undo')}</span>
           </button>
           <button
-            className={`toolbar-btn ${!canRedo ? 'disabled' : ''}`}
+            className={`toolbar-btn toolbar-btn-labeled ${!canRedo ? 'disabled' : ''}`}
             onClick={onRedo}
             disabled={!canRedo}
-            title="重做 (Ctrl+Shift+Z)"
           >
-            <Redo2 size={18} />
+            <Redo2 size={16} />
+            <span className="toolbar-label">{t('重做', 'Redo')}</span>
           </button>
         </div>
       )}
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" onClick={onZoomIn} title="放大">
-          <ZoomIn size={18} />
+        <button className="toolbar-btn" onClick={onZoomIn} title={t('放大', 'Zoom In')}>
+          <ZoomIn size={16} />
         </button>
-        <button className="toolbar-btn" onClick={onZoomOut} title="缩小">
-          <ZoomOut size={18} />
+        <button className="toolbar-btn" onClick={onZoomOut} title={t('缩小', 'Zoom Out')}>
+          <ZoomOut size={16} />
         </button>
-        <button className="toolbar-btn" onClick={onFitView} title="适应视图">
-          <Maximize size={18} />
+        <button className="toolbar-btn" onClick={onFitView} title={t('适应视图', 'Fit View')}>
+          <Maximize size={16} />
         </button>
       </div>
     </div>

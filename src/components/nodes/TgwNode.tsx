@@ -361,9 +361,11 @@ const TgwNode = memo(({ data, id }: NodeProps) => {
       )}
       
       <Handle type="source" position={Position.Bottom} id="bottom" />
+      <Handle type="source" position={Position.Bottom} id="source-bottom" style={{ left: '50%' }} />
       <Handle type="source" position={Position.Bottom} id="bottom-left" style={{ left: '25%' }} />
       <Handle type="source" position={Position.Bottom} id="bottom-right" style={{ left: '75%' }} />
       <Handle type="source" position={Position.Right} id="right" />
+      <Handle type="source" position={Position.Right} id="source-right" style={{ top: '50%' }} />
     </div>
   );
 });
