@@ -13,6 +13,8 @@ import '@xyflow/react/dist/style.css';
 
 import type { NetworkConfig } from '../types/network';
 import { parseNetworkConfig, parseNetworkConfigSimplified } from '../utils/networkParser';
+import { validateNetworkConfig } from '../utils/configValidator';
+import type { ValidationMessage } from '../utils/configValidator';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import VpcNode from './nodes/VpcNode';
 import TgwNode from './nodes/TgwNode';
@@ -25,6 +27,8 @@ import TopoTgwNode from './nodes/SimpleTgwNode';
 import TopoAccountNode from './nodes/TopoAccountNode';
 import TopoComponentNode from './nodes/TopoComponentNode';
 import TopoRegionLabelNode from './nodes/TopoRegionLabelNode';
+import TopoEndpointNode from './nodes/TopoEndpointNode';
+import TopoDxNode from './nodes/TopoDxNode';
 import FileUpload from './FileUpload';
 import JsonEditor from './JsonEditor';
 import Toolbar from './Toolbar';
@@ -44,6 +48,8 @@ const nodeTypes: NodeTypes = {
   topoAccount: TopoAccountNode,
   topoComponent: TopoComponentNode,
   topoRegionLabel: TopoRegionLabelNode,
+  topoEndpoint: TopoEndpointNode,
+  topoDx: TopoDxNode,
 };
 
 function NetworkFlowInner() {
@@ -54,6 +60,8 @@ function NetworkFlowInner() {
   const [showEditor, setShowEditor] = useState(false);
   const [showUpload, setShowUpload] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('detailed');
+  const [validationMessages, setValidationMessages] = useState<ValidationMessage[]>([]);
+  const [showValidation, setShowValidation] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reactFlowInstance = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -104,6 +112,11 @@ function NetworkFlowInner() {
   const handleFileLoad = useCallback((newConfig: unknown) => {
     const networkConfig = newConfig as NetworkConfig;
     setConfig(networkConfig);
+    const msgs = validateNetworkConfig(networkConfig);
+    setValidationMessages(msgs);
+    if (msgs.some(m => m.level === 'error' || m.level === 'warning')) {
+      setShowValidation(true);
+    }
     const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(networkConfig, viewMode);
     setNodes(parsedNodes as Node[]);
     setEdges(parsedEdges as Edge[]);
@@ -297,6 +310,8 @@ function NetworkFlowInner() {
                 if (node.type === 'az') return '#475569';
                 if (node.type === 'topoAccount') return '#60a5fa';
                 if (node.type === 'topoComponent') return '#22c55e';
+                if (node.type === 'topoEndpoint') return '#8b5cf6';
+                if (node.type === 'topoDx') return '#f97316';
                 return '#6B7280';
               }}
               maskColor="rgba(15, 23, 42, 0.8)"
@@ -311,6 +326,39 @@ function NetworkFlowInner() {
           onSave={handleSaveConfig}
           onClose={() => setShowEditor(false)}
         />
+      )}
+
+      {showValidation && validationMessages.length > 0 && (
+        <div className="validation-panel">
+          <div className="validation-header">
+            <span>配置校验</span>
+            <span className="validation-counts">
+              {validationMessages.filter(m => m.level === 'error').length > 0 && (
+                <span className="count-error">{validationMessages.filter(m => m.level === 'error').length} 错误</span>
+              )}
+              {validationMessages.filter(m => m.level === 'warning').length > 0 && (
+                <span className="count-warning">{validationMessages.filter(m => m.level === 'warning').length} 警告</span>
+              )}
+              {validationMessages.filter(m => m.level === 'info').length > 0 && (
+                <span className="count-info">{validationMessages.filter(m => m.level === 'info').length} 提示</span>
+              )}
+            </span>
+            <button className="validation-close" onClick={() => setShowValidation(false)}>✕</button>
+          </div>
+          <div className="validation-list">
+            {validationMessages.map((msg, i) => (
+              <div key={i} className={`validation-item validation-${msg.level}`}>
+                <span className="validation-icon">
+                  {msg.level === 'error' ? '✗' : msg.level === 'warning' ? '⚠' : 'ℹ'}
+                </span>
+                <div className="validation-content">
+                  <span className="validation-path">{msg.path}</span>
+                  <span className="validation-msg">{msg.message}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

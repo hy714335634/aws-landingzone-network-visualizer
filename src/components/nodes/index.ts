@@ -9,6 +9,8 @@ import TopoTgwNode from './SimpleTgwNode';
 import TopoAccountNode from './TopoAccountNode';
 import TopoComponentNode from './TopoComponentNode';
 import TopoRegionLabelNode from './TopoRegionLabelNode';
+import TopoEndpointNode from './TopoEndpointNode';
+import TopoDxNode from './TopoDxNode';
 
 export const nodeTypes = {
   vpc: VpcNode,
@@ -22,9 +24,12 @@ export const nodeTypes = {
   topoAccount: TopoAccountNode,
   topoComponent: TopoComponentNode,
   topoRegionLabel: TopoRegionLabelNode,
+  topoEndpoint: TopoEndpointNode,
+  topoDx: TopoDxNode,
 };
 
 export {
   VpcNode, TgwNode, SubnetNode, SubnetGroupNode, RegionNode, AzNode,
   TopoVpcNode, TopoTgwNode, TopoAccountNode, TopoComponentNode, TopoRegionLabelNode,
+  TopoEndpointNode, TopoDxNode,
 };

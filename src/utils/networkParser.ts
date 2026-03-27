@@ -556,6 +556,7 @@ const TOPO = {
   TGW_W: 160, TGW_H: 78,
   ACC_W: 120, ACC_H: 30,
   COMP_W: 68, COMP_H: 28,
+  EP_W: 140, EP_H: 24, EP_TAG_H: 18,  // Endpoint 节点尺寸
   REGION_LABEL_W: 160, REGION_LABEL_H: 28,
   VPC_GAP_X: 340,            // VPCs 水平间距（需容纳右侧账号节点 150+16+120+54=340）
   COMP_ROW_Y: -65,           // 组件行相对 VPC 的 Y 偏移（上方，留出呼吸空间）
@@ -675,6 +676,52 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       });
     }
 
+    // Endpoint 节点在 VPC 右侧（账号节点下方）
+    let epOffsetY = vpcY + 10 + (vpcConfig.accounts?.length || 0) * (TOPO.ACC_H + 8);
+    if (vpcConfig.endpoints?.length) {
+      const epId = `${vpcId}-ep-iface`;
+      const epH = TOPO.EP_H + Math.ceil(vpcConfig.endpoints.length / 3) * TOPO.EP_TAG_H + 4;
+      nodes.push({
+        id: epId,
+        type: 'topoEndpoint',
+        position: { x: vpcX + TOPO.VPC_W + 16, y: epOffsetY },
+        data: { endpoints: vpcConfig.endpoints, isGateway: false },
+        style: { width: TOPO.EP_W, height: epH },
+      });
+      edges.push({
+        id: `edge-ep-${epId}`,
+        source: vpcId,
+        target: epId,
+        sourceHandle: 'source-right',
+        targetHandle: 'left',
+        type: 'bezier',
+        style: { stroke: '#8b5cf6', strokeWidth: 1.5, strokeDasharray: '4,3' },
+      });
+      epOffsetY += epH + 8;
+      maxBottomY = Math.max(maxBottomY, epOffsetY);
+    }
+    if (vpcConfig.gw_endpoints?.length) {
+      const epId = `${vpcId}-ep-gw`;
+      const epH = TOPO.EP_H + Math.ceil(vpcConfig.gw_endpoints.length / 3) * TOPO.EP_TAG_H + 4;
+      nodes.push({
+        id: epId,
+        type: 'topoEndpoint',
+        position: { x: vpcX + TOPO.VPC_W + 16, y: epOffsetY },
+        data: { endpoints: vpcConfig.gw_endpoints, isGateway: true },
+        style: { width: TOPO.EP_W, height: epH },
+      });
+      edges.push({
+        id: `edge-ep-${epId}`,
+        source: vpcId,
+        target: epId,
+        sourceHandle: 'source-right',
+        targetHandle: 'left',
+        type: 'bezier',
+        style: { stroke: '#8b5cf6', strokeWidth: 1.5, strokeDasharray: '4,3' },
+      });
+      maxBottomY = Math.max(maxBottomY, epOffsetY + epH);
+    }
+
     // TGW ↔ VPC 连线：从 VPC 底部到 TGW 顶部（TGW 在下方）
     if (hasTgw && hasIntraSubnet(vpcConfig.subnets)) {
       edges.push({
@@ -702,6 +749,29 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       position: { x: tgwX, y: tgwY },
       data: { label: 'TGW', asn: mainRegion.tgw!.asn, cidr: mainRegion.tgw!.cidr, peer: false },
       style: { width: TOPO.TGW_W, height: TOPO.TGW_H },
+    });
+  }
+
+  // DX 节点（仅主区域，在 TGW 右侧）
+  if (config.dx?.enabled && hasTgw) {
+    const dxX = mainCenterX + TOPO.TGW_W / 2 + 40;
+    const dxY = tgwBottomY - TOPO.TGW_H;
+    nodes.push({
+      id: `${mainRegion.id}-dx`,
+      type: 'topoDx',
+      position: { x: dxX, y: dxY },
+      data: { asn: config.dx.asn, prefixes: config.dx.prefixes },
+      style: { width: TOPO.TGW_W, height: 60 },
+    });
+    edges.push({
+      id: `${mainRegion.id}-dx-tgw`,
+      source: `${mainRegion.id}-tgw`,
+      target: `${mainRegion.id}-dx`,
+      sourceHandle: 'source-right',
+      targetHandle: 'left',
+      type: 'bezier',
+      animated: true,
+      style: { stroke: '#f97316', strokeWidth: 3 },
     });
   }
 
