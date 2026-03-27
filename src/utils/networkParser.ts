@@ -355,8 +355,14 @@ function detectMainRegionName(config: NetworkConfig): string {
  * 从对等区域的 TGW 路由表中查找 peer 路由指向的区域名
  */
 function inferMainRegionDisplayName(config: NetworkConfig): string {
-  // 检查对等区域的路由表，找到指向 main 的 peer 路由的来源区域
-  // 然后从主区域路由表中找到指向这些区域的 peer 路由
+  // 策略：从主区域 TGW 路由表中查找 peer 路由的 key
+  // 这些 key 是对等区域名称（如 us-west-1, ap-east-1）
+  // 排除这些已知的对等区域后，剩余的 AWS 区域格式的 key 可能就是主区域
+  // 但更可靠的方法：查看主区域 TGW 路由表中所有 peer 路由的 key，
+  // 这些是对等区域名称。主区域名称不会出现在自己的路由表中。
+  // 所以我们从对等区域的路由表中查找 "main" → "peer" 的路由，
+  // 然后看主区域路由表中哪些区域名被引用为 peer 目标。
+
   const peerRegionNames: string[] = [];
   Object.entries(config).forEach(([key, value]) => {
     if (ROOT_LEVEL_KEYS.includes(key) || !value || typeof value !== 'object') return;
@@ -365,19 +371,43 @@ function inferMainRegionDisplayName(config: NetworkConfig): string {
 
   if (peerRegionNames.length === 0) return 'MAIN REGION';
 
-  // 从主区域 TGW 路由表中查找 peer 路由的区域名，推断主区域所在地理位置
-  // 如果对等区域都是 us-* 开头，主区域可能也是 us-east-1 等
-  // 但 JSON 中没有显式指定，所以显示为 "PRIMARY (推断)"
-  // 尝试从对等区域名称推断：如果有 us-west-1, ap-east-1 等，主区域可能是 us-east-1
-  const hasUs = peerRegionNames.some(r => r.startsWith('us-'));
-  const hasAp = peerRegionNames.some(r => r.startsWith('ap-'));
-  const hasEu = peerRegionNames.some(r => r.startsWith('eu-'));
-  const hasCn = peerRegionNames.some(r => r.startsWith('cn-'));
+  // 从主区域 TGW 路由表中收集所有 peer 路由的 key（这些是对等区域名称）
+  const peerRouteKeys = new Set<string>();
+  if (config.tgw?.tables) {
+    Object.values(config.tgw.tables).forEach(table => {
+      if (table.routes) {
+        Object.entries(table.routes).forEach(([key, target]) => {
+          if (target === 'peer' && key !== '*' && key !== 'tgw' && key !== 'main') {
+            peerRouteKeys.add(key);
+          }
+        });
+      }
+    });
+  }
 
-  // 简单启发式：如果有多个地理区域的对等，主区域可能是最常见的
-  if (hasCn) return 'PRIMARY (CN)';
-  if (hasUs && !hasAp && !hasEu) return 'PRIMARY (US)';
-  if (hasUs) return 'PRIMARY (US)';
+  // 如果主区域路由表中引用了所有对等区域，说明我们知道了所有对等区域
+  // 主区域就是不在对等区域列表中的那个 AWS 区域
+  // 但 JSON 中主区域没有显式名称，所以我们用排除法：
+  // 如果对等区域有 us-west-1, ap-east-1, eu-central-1, eu-west-2
+  // 且主区域路由表引用了这些，那主区域可能是 us-east-1（最常见的主区域）
+
+  // 更精确的推断：查看对等区域中是否有 us-east-1
+  // 如果没有，且有其他 us-* 区域，主区域很可能是 us-east-1
+  const allRegionCodes = new Set([...peerRegionNames, ...peerRouteKeys]);
+  
+  // 常见主区域候选
+  const candidates = ['us-east-1', 'cn-northwest-1', 'cn-north-1', 'eu-west-1', 'ap-southeast-1'];
+  for (const candidate of candidates) {
+    if (!allRegionCodes.has(candidate)) {
+      // 检查是否与已知对等区域在同一地理区域
+      const candidateGeo = candidate.split('-')[0];
+      const hasMatchingGeo = peerRegionNames.some(r => r.startsWith(candidateGeo + '-'));
+      if (hasMatchingGeo || peerRegionNames.length > 0) {
+        return `PRIMARY (${candidate})`;
+      }
+    }
+  }
+
   return 'PRIMARY';
 }
 
@@ -661,9 +691,12 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
     const vpcId = `${mainRegion.id}-${vpcName}`;
     const vpcX = i * TOPO.VPC_GAP_X;
 
-    // VPC 节点（组件标记内嵌）
+    // 账号标识：有 accounts 显示第一个账号 ID，无则显示 DEFAULT
+    const accountLabel = vpcConfig.accounts?.length ? vpcConfig.accounts[0] : 'DEFAULT';
+
+    // VPC 节点（组件和账号内嵌）
     const hasComps = vpcConfig.igw?.enabled || vpcConfig.nat?.enabled || vpcConfig.nfw?.enabled || vpcConfig.gwlb?.enabled;
-    const vpcH = hasComps ? TOPO.VPC_H + 8 : TOPO.VPC_H;
+    const vpcH = TOPO.VPC_H + (hasComps ? 8 : 0) + 16; // 额外高度给账号行
     nodes.push({
       id: vpcId,
       type: 'topoVpc',
@@ -673,32 +706,11 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
         isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint,
         hasIgw: vpcConfig.igw?.enabled, hasNat: vpcConfig.nat?.enabled,
         hasNfw: vpcConfig.nfw?.enabled, hasGwlb: vpcConfig.gwlb?.enabled,
+        accountId: accountLabel,
         jsonPath: vpcJsonPath(mainRegion.id, vpcName),
       },
       style: { width: TOPO.VPC_W, height: vpcH },
     });
-
-    // 账号节点在 VPC 右侧
-    if (vpcConfig.accounts?.length) {
-      vpcConfig.accounts.forEach((acc, ai) => {
-        const accId = `${vpcId}-acc-${ai}`;
-        const accX = vpcX + TOPO.VPC_W + 12;
-        const accY = vpcY + 6 + ai * (TOPO.ACC_H + 6);
-        nodes.push({
-          id: accId, type: 'topoAccount',
-          position: { x: accX, y: accY },
-          data: { accountId: acc },
-          style: { width: TOPO.ACC_W, height: TOPO.ACC_H },
-        });
-        edges.push({
-          id: `edge-acc-${accId}`, source: vpcId, target: accId,
-          sourceHandle: 'source-right', targetHandle: 'left',
-          type: 'bezier',
-          style: { stroke: '#3b82f6', strokeWidth: 1.5, strokeDasharray: '4,3' },
-        });
-        maxBottomY = Math.max(maxBottomY, accY + TOPO.ACC_H);
-      });
-    }
 
     // TGW ↔ VPC 连线
     if (hasTgw && hasIntraSubnet(vpcConfig.subnets)) {
@@ -838,7 +850,8 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
           const vpcId = `${region.id}-${vpcName}`;
           const vpcX = vpcStartX + vi * TOPO.VPC_GAP_X;
           const hasComps = vpcConfig.igw?.enabled || vpcConfig.nat?.enabled || vpcConfig.nfw?.enabled || vpcConfig.gwlb?.enabled;
-          const vpcH = hasComps ? TOPO.VPC_H + 8 : TOPO.VPC_H;
+          const accountLabel = vpcConfig.accounts?.length ? vpcConfig.accounts[0] : 'DEFAULT';
+          const vpcH = TOPO.VPC_H + (hasComps ? 8 : 0) + 16;
 
           nodes.push({
             id: vpcId, type: 'topoVpc',
@@ -848,6 +861,7 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
               isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint,
               hasIgw: vpcConfig.igw?.enabled, hasNat: vpcConfig.nat?.enabled,
               hasNfw: vpcConfig.nfw?.enabled, hasGwlb: vpcConfig.gwlb?.enabled,
+              accountId: accountLabel,
               jsonPath: vpcJsonPath(region.id, vpcName),
             },
             style: { width: TOPO.VPC_W, height: vpcH },

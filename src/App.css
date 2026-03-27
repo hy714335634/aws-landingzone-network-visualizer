@@ -1968,3 +1968,22 @@
 .topo-comp-inline.nat { background: #8b5cf6; }
 .topo-comp-inline.nfw { background: #ef4444; }
 .topo-comp-inline.gwlb { background: #3b82f6; }
+
+/* ==========================================
+   Topology View — VPC Account Label (inline)
+   ========================================== */
+.topo-vpc-account {
+  font-size: 0.58rem;
+  font-family: 'Monaco', 'Menlo', monospace;
+  color: #64748b;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-bottom: 3px;
+  text-align: center;
+  letter-spacing: 0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

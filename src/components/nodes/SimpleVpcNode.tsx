@@ -12,6 +12,7 @@ interface TopoVpcNodeData {
   hasNat?: boolean;
   hasNfw?: boolean;
   hasGwlb?: boolean;
+  accountId?: string;
 }
 
 const TopoVpcNode = memo(({ data }: NodeProps) => {
@@ -32,6 +33,9 @@ const TopoVpcNode = memo(({ data }: NodeProps) => {
       <Handle type="source" position={Position.Left} id="source-left" />
       <Handle type="source" position={Position.Right} id="source-right" />
       <Handle type="source" position={Position.Bottom} id="source-bottom" />
+      {d.accountId && (
+        <div className="topo-vpc-account">{d.accountId}</div>
+      )}
       <div className="topo-vpc-row">
         <Cloud size={13} />
         <span className="topo-vpc-name">{d.label.toUpperCase()}</span>
