@@ -23,6 +23,8 @@ const VpcNode = memo(({ data }: NodeProps) => {
     <div className={`vpc-node ${nodeData.isHub ? 'vpc-hub' : ''} ${nodeData.isEndpoint ? 'vpc-endpoint' : ''}`}>
       <Handle type="target" position={Position.Right} id="right" />
       <Handle type="target" position={Position.Left} id="left" />
+      <Handle type="target" position={Position.Top} id="top" />
+      <Handle type="source" position={Position.Bottom} id="bottom" />
       <div className="vpc-header">
         <div className="vpc-title">
           <Cloud size={16} />

@@ -19,18 +19,17 @@ const LAYOUT = {
   VPC_MIN_WIDTH: 500,
   AZ_WIDTH: 230,
   AZ_GAP: 12,
-  VPC_GAP: 80,
+  VPC_GAP: 40,
   VPC_MIN_HEIGHT: 200,
-  REGION_PADDING: 50,
+  REGION_PADDING: 30,
   REGION_HEADER_HEIGHT: 55,
-  REGION_BOTTOM_PADDING: 50,
-  REGION_GAP: 120,
+  REGION_BOTTOM_PADDING: 40,
+  REGION_GAP: 80,
   TGW_WIDTH: 320,
   TGW_MIN_HEIGHT: 150,
-  TGW_MARGIN: 60,
+  TGW_MARGIN: 40,
   TGW_TOP_MARGIN: 10,
-  VPCS_PER_ROW: 1,
-  ROW_GAP: 60,
+  ROW_GAP: 40,
   SUBNET_HEIGHT: 28,
   AZ_HEADER_HEIGHT: 32,
   AZ_PADDING: 8,
@@ -301,6 +300,10 @@ function calculateVpcGridLayout(vpcEntries: [string, VpcConfig][]): {
 
   const vpcDimensions = vpcEntries.map(([, config]) => calculateVpcDimensions(config));
 
+  // 动态列数：根据 VPC 数量自动调整
+  const count = vpcEntries.length;
+  const vpcsPerRow = count <= 2 ? count : count <= 4 ? 2 : count <= 9 ? 3 : 4;
+
   let currentRow: number[] = [];
   let currentRowWidth = 0;
 
@@ -309,7 +312,7 @@ function calculateVpcGridLayout(vpcEntries: [string, VpcConfig][]): {
     currentRow.push(index);
     currentRowWidth += dim.width + (currentRow.length > 1 ? LAYOUT.VPC_GAP : 0);
 
-    if (currentRow.length >= LAYOUT.VPCS_PER_ROW || index === vpcEntries.length - 1) {
+    if (currentRow.length >= vpcsPerRow || index === vpcEntries.length - 1) {
       const maxHeight = Math.max(...currentRow.map(i => vpcDimensions[i].height));
       rows.push({ vpcs: [...currentRow], maxHeight, totalWidth: currentRowWidth });
       currentRow = [];
@@ -342,22 +345,40 @@ function calculateVpcGridLayout(vpcEntries: [string, VpcConfig][]): {
   return { positions, totalWidth, totalHeight: currentY, maxContentHeight };
 }
 
-// 检测主区域名称 - 尝试从 TGW 路由表中推断
+// 检测主区域名称 - 从对等区域的路由表推断
 function detectMainRegionName(config: NetworkConfig): string {
-  // 从对等区域的路由表里查找 "main" 路由指向的区域
-  // 或者从主区域 TGW 路由表里查找对等区域名称来推断
-  const peerRegions: string[] = [];
+  return 'main';
+}
+
+/**
+ * 推断主区域的 AWS 区域名称（用于显示）
+ * 从对等区域的 TGW 路由表中查找 peer 路由指向的区域名
+ */
+function inferMainRegionDisplayName(config: NetworkConfig): string {
+  // 检查对等区域的路由表，找到指向 main 的 peer 路由的来源区域
+  // 然后从主区域路由表中找到指向这些区域的 peer 路由
+  const peerRegionNames: string[] = [];
   Object.entries(config).forEach(([key, value]) => {
     if (ROOT_LEVEL_KEYS.includes(key) || !value || typeof value !== 'object') return;
-    if ('vpcs' in value) {
-      peerRegions.push(key);
-    }
+    if ('vpcs' in value) peerRegionNames.push(key);
   });
 
-  // 如果有对等区域，主区域名可以从上下文推断
-  // 但 JSON 配置中没有显式指定主区域名称
-  // 使用 "main" 作为标识，同时在显示上标记为 PRIMARY
-  return 'main';
+  if (peerRegionNames.length === 0) return 'MAIN REGION';
+
+  // 从主区域 TGW 路由表中查找 peer 路由的区域名，推断主区域所在地理位置
+  // 如果对等区域都是 us-* 开头，主区域可能也是 us-east-1 等
+  // 但 JSON 中没有显式指定，所以显示为 "PRIMARY (推断)"
+  // 尝试从对等区域名称推断：如果有 us-west-1, ap-east-1 等，主区域可能是 us-east-1
+  const hasUs = peerRegionNames.some(r => r.startsWith('us-'));
+  const hasAp = peerRegionNames.some(r => r.startsWith('ap-'));
+  const hasEu = peerRegionNames.some(r => r.startsWith('eu-'));
+  const hasCn = peerRegionNames.some(r => r.startsWith('cn-'));
+
+  // 简单启发式：如果有多个地理区域的对等，主区域可能是最常见的
+  if (hasCn) return 'PRIMARY (CN)';
+  if (hasUs && !hasAp && !hasEu) return 'PRIMARY (US)';
+  if (hasUs) return 'PRIMARY (US)';
+  return 'PRIMARY';
 }
 
 // ============================================
@@ -391,15 +412,14 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
     const vpcEntries = Object.entries(mainRegion.vpcs);
     const hasTgw = mainRegion.tgw?.enabled;
     const tgwHeight = hasTgw ? estimateTgwHeight(mainRegion.tgw!) : 0;
-    const tgwWidth = hasTgw ? LAYOUT.TGW_WIDTH + LAYOUT.TGW_MARGIN : 0;
 
     // 使用网格布局计算 VPC 位置
     const { positions, totalWidth, maxContentHeight } = calculateVpcGridLayout(vpcEntries);
 
-    // 区域高度取 VPC 内容高度和 TGW 高度的最大值
-    const tgwTotalHeight = tgwHeight + LAYOUT.REGION_HEADER_HEIGHT + LAYOUT.TGW_TOP_MARGIN + LAYOUT.REGION_BOTTOM_PADDING;
-    const regionContentHeight = Math.max(maxContentHeight, tgwTotalHeight);
-    const regionWidth = totalWidth + tgwWidth;
+    // TGW 在 VPC 下方居中，不占用右侧空间
+    const tgwBlockHeight = hasTgw ? tgwHeight + LAYOUT.TGW_MARGIN : 0;
+    const regionContentHeight = maxContentHeight + tgwBlockHeight;
+    const regionWidth = totalWidth;
     mainRegionWidth = regionWidth;
 
     nodes.push({
@@ -419,14 +439,14 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
       );
       nodes.push(...vpcNodes);
 
-      // TGW 连接：需要 intra 子网
+      // TGW 连接：VPC 底部 → TGW 顶部（垂直连线，避免交叉）
       if (hasTgw && hasIntraSubnet(vpcConfig.subnets)) {
         edges.push({
           id: `${mainRegion.id}-tgw-${vpcName}`,
-          source: `${mainRegion.id}-tgw`,
-          target: `${mainRegion.id}-${vpcName}`,
-          sourceHandle: 'source-left',
-          targetHandle: 'right',
+          source: `${mainRegion.id}-${vpcName}`,
+          target: `${mainRegion.id}-tgw`,
+          sourceHandle: 'bottom',
+          targetHandle: 'top',
           type: 'smoothstep',
           animated: true,
           style: { stroke: '#F59E0B', strokeWidth: 2 },
@@ -436,15 +456,10 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
     });
 
     if (hasTgw) {
-      // 将 TGW 垂直居中于 VPC 列
-      const vpcColumnTop = LAYOUT.REGION_HEADER_HEIGHT;
-      const vpcColumnBottom = maxContentHeight - LAYOUT.REGION_BOTTOM_PADDING;
-      const vpcColumnMidY = (vpcColumnTop + vpcColumnBottom) / 2;
-      const tgwY = Math.max(
-        LAYOUT.REGION_HEADER_HEIGHT + LAYOUT.TGW_TOP_MARGIN,
-        vpcColumnMidY - tgwHeight / 2
-      );
-      nodes.push(createTgwNode(mainRegion.tgw!, mainRegion.id, totalWidth + LAYOUT.TGW_MARGIN, tgwY, tgwHeight));
+      // TGW 在 VPC 网格下方居中
+      const tgwX = (totalWidth - LAYOUT.TGW_WIDTH) / 2;
+      const tgwY = maxContentHeight + LAYOUT.TGW_MARGIN / 2;
+      nodes.push(createTgwNode(mainRegion.tgw!, mainRegion.id, tgwX, tgwY, tgwHeight));
     }
     currentY += regionContentHeight + LAYOUT.REGION_GAP;
   }
@@ -452,25 +467,19 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
   // 其他区域 - 2 列网格排列，减少 peering 连线交叉
   const otherRegions = regions.filter(r => !r.isMain);
   if (otherRegions.length > 0) {
-    // 预计算每个对等区域的尺寸
+    // 预计算每个对等区域的尺寸（TGW 在 VPC 下方）
     const peerDims = otherRegions.map(region => {
       const vpcEntries = Object.entries(region.vpcs);
       const hasTgw = region.tgw?.enabled;
       const tgwHeight = hasTgw ? estimateTgwHeight(region.tgw!) : 0;
-      const tgwWidth = hasTgw ? LAYOUT.TGW_WIDTH + LAYOUT.TGW_MARGIN : 0;
-      let maxVpcWidth = LAYOUT.VPC_MIN_WIDTH;
-      let totalVpcHeight = LAYOUT.REGION_HEADER_HEIGHT;
-      const vpcDimensions = vpcEntries.map(([, vpcConfig]) => {
-        const dim = calculateVpcDimensions(vpcConfig);
-        maxVpcWidth = Math.max(maxVpcWidth, dim.width);
-        totalVpcHeight += dim.height + 20;
-        return dim;
-      });
-      totalVpcHeight += LAYOUT.REGION_BOTTOM_PADDING - 20;
-      const tgwTotalHeight = tgwHeight + LAYOUT.REGION_HEADER_HEIGHT + LAYOUT.TGW_TOP_MARGIN + LAYOUT.REGION_BOTTOM_PADDING;
-      const height = Math.max(totalVpcHeight, tgwTotalHeight);
-      const width = maxVpcWidth + LAYOUT.REGION_PADDING * 2 + tgwWidth;
-      return { width, height, maxVpcWidth, tgwHeight, vpcDimensions, vpcEntries };
+
+      // 使用网格布局计算 VPC 位置
+      const peerGrid = calculateVpcGridLayout(vpcEntries);
+      const tgwBlockHeight = hasTgw ? tgwHeight + LAYOUT.TGW_MARGIN : 0;
+      const height = peerGrid.maxContentHeight + tgwBlockHeight;
+      const width = peerGrid.totalWidth;
+
+      return { width, height, tgwHeight, peerGrid, vpcEntries };
     });
 
     // 按 2 列分行排列，居中于主区域下方
@@ -496,35 +505,35 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
           style: { width: dim.width, height: dim.height },
         });
 
-        let vpcY = LAYOUT.REGION_HEADER_HEIGHT;
+        const peerGrid = actualDim.peerGrid;
         vpcEntries.forEach(([vpcName, vpcConfig], index) => {
-          const vpcDim = actualDim.vpcDimensions[index];
+          const pos = peerGrid.positions[index];
           const jp = vpcJsonPath(region.id, vpcName);
           const vpcNodes = createVpcWithAzLayout(
             vpcName, vpcConfig, region.id,
-            LAYOUT.REGION_PADDING, vpcY, vpcDim.width, vpcDim.height, jp
+            pos.x, pos.y, pos.width, pos.height, jp
           );
           nodes.push(...vpcNodes);
 
           if (hasTgw && hasIntraSubnet(vpcConfig.subnets)) {
             edges.push({
               id: `${region.id}-tgw-${vpcName}`,
-              source: `${region.id}-tgw`,
-              target: `${region.id}-${vpcName}`,
-              sourceHandle: 'source-left',
-              targetHandle: 'right',
+              source: `${region.id}-${vpcName}`,
+              target: `${region.id}-tgw`,
+              sourceHandle: 'bottom',
+              targetHandle: 'top',
               type: 'smoothstep',
               animated: true,
               style: { stroke: '#F59E0B', strokeWidth: 2 },
               zIndex: 100,
             });
           }
-          vpcY += vpcDim.height + 20;
         });
 
         if (hasTgw) {
-          const tgwY = LAYOUT.REGION_HEADER_HEIGHT + LAYOUT.TGW_TOP_MARGIN;
-          nodes.push(createTgwNode(region.tgw!, region.id, actualDim.maxVpcWidth + LAYOUT.REGION_PADDING + LAYOUT.TGW_MARGIN, tgwY, actualDim.tgwHeight));
+          const tgwX = (peerGrid.totalWidth - LAYOUT.TGW_WIDTH) / 2;
+          const tgwY = peerGrid.maxContentHeight + LAYOUT.TGW_MARGIN / 2;
+          nodes.push(createTgwNode(region.tgw!, region.id, tgwX, tgwY, actualDim.tgwHeight));
 
           if (region.tgw!.peer && mainRegion?.tgw?.enabled) {
             // 根据列位置选择不同的 source handle，避免 peering 线交叉
@@ -569,20 +578,17 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
 // ============================================
 
 const TOPO = {
-  VPC_W: 150, VPC_H: 52,
+  VPC_W: 160, VPC_H: 60,
   TGW_W: 160, TGW_H: 78,
   ACC_W: 120, ACC_H: 30,
-  COMP_W: 68, COMP_H: 28,
-  EP_W: 140, EP_H: 24, EP_TAG_H: 18,  // Endpoint 节点尺寸
-  REGION_LABEL_W: 160, REGION_LABEL_H: 28,
-  VPC_GAP_X: 340,            // VPCs 水平间距（需容纳右侧账号节点 150+16+120+54=340）
-  COMP_ROW_Y: -65,           // 组件行相对 VPC 的 Y 偏移（上方，留出呼吸空间）
-  TGW_GAP_BELOW: 80,         // TGW 在最低元素下方的间距
-  PEER_COLS: 2,              // 对等区域列数
-  PEER_GAP_X: 380,           // 对等区域列间距（宽裕排布）
-  PEER_Y_GAP: 120,           // TGW 到对等区域的垂直间距
-  PEER_ROW_GAP: 300,         // 对等区域行间距（含 label+TGW+VPC+comp ≈ 230px + 缓冲）
-  COMP_GAP: 78,              // 组件之间的水平间距
+  EP_W: 140, EP_H: 24, EP_TAG_H: 18,
+  REGION_LABEL_W: 180, REGION_LABEL_H: 28,
+  VPC_GAP_X: 200,            // VPCs 水平间距（紧凑，组件内嵌）
+  TGW_GAP_BELOW: 60,
+  PEER_COLS: 2,
+  PEER_GAP_X: 500,           // 对等区域列间距（容纳多个 VPC）
+  PEER_Y_GAP: 100,
+  PEER_ROW_GAP: 280,
 };
 
 export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: Node[]; edges: Edge[] } {
@@ -613,79 +619,56 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
   // 计算主区域中心 X 坐标
   const mainCenterX = (mainVpcs.length - 1) * TOPO.VPC_GAP_X / 2 + TOPO.VPC_W / 2;
 
-  // 区域标签
+  // 区域标签 — 使用推断的区域名称
+  const mainDisplayName = inferMainRegionDisplayName(config);
   nodes.push({
     id: `topo-label-${mainRegion.id}`,
     type: 'topoRegionLabel',
-    position: { x: mainCenterX - TOPO.REGION_LABEL_W / 2, y: -110 },
-    data: { label: 'MAIN REGION', isMain: true },
+    position: { x: mainCenterX - TOPO.REGION_LABEL_W / 2, y: -60 },
+    data: { label: mainDisplayName, isMain: true },
     style: { width: TOPO.REGION_LABEL_W },
   });
 
-  // VPC 行 (y=0)，组件在上方，账号在下方
+  // VPC 行 (y=0)，组件内嵌在 VPC 节点中
   const vpcY = 0;
-  let maxBottomY = vpcY + TOPO.VPC_H; // 跟踪主区域最低元素的 Y
+  let maxBottomY = vpcY + TOPO.VPC_H;
 
   mainVpcs.forEach(([vpcName, vpcConfig], i) => {
     const vpcId = `${mainRegion.id}-${vpcName}`;
     const vpcX = i * TOPO.VPC_GAP_X;
 
-    // VPC 节点
+    // VPC 节点（组件标记内嵌）
+    const hasComps = vpcConfig.igw?.enabled || vpcConfig.nat?.enabled || vpcConfig.nfw?.enabled || vpcConfig.gwlb?.enabled;
+    const vpcH = hasComps ? TOPO.VPC_H + 8 : TOPO.VPC_H;
     nodes.push({
       id: vpcId,
       type: 'topoVpc',
       position: { x: vpcX, y: vpcY },
-      data: { label: vpcName, cidr: vpcConfig.cidr, isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint, jsonPath: vpcJsonPath(mainRegion.id, vpcName) },
-      style: { width: TOPO.VPC_W, height: TOPO.VPC_H },
+      data: {
+        label: vpcName, cidr: vpcConfig.cidr,
+        isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint,
+        hasIgw: vpcConfig.igw?.enabled, hasNat: vpcConfig.nat?.enabled,
+        hasNfw: vpcConfig.nfw?.enabled, hasGwlb: vpcConfig.gwlb?.enabled,
+        jsonPath: vpcJsonPath(mainRegion.id, vpcName),
+      },
+      style: { width: TOPO.VPC_W, height: vpcH },
     });
 
-    // 组件节点 (IGW/NAT/NFW/GWLB) 在 VPC 上方
-    const comps: string[] = [];
-    if (vpcConfig.igw?.enabled) comps.push('igw');
-    if (vpcConfig.nat?.enabled) comps.push('nat');
-    if (vpcConfig.nfw?.enabled) comps.push('nfw');
-    if (vpcConfig.gwlb?.enabled) comps.push('gwlb');
-
-    const compsStartX = vpcX + (TOPO.VPC_W - comps.length * TOPO.COMP_GAP + (TOPO.COMP_GAP - TOPO.COMP_W)) / 2;
-    comps.forEach((comp, ci) => {
-      const compId = `${vpcId}-comp-${comp}`;
-      nodes.push({
-        id: compId,
-        type: 'topoComponent',
-        position: { x: compsStartX + ci * TOPO.COMP_GAP, y: vpcY + TOPO.COMP_ROW_Y },
-        data: { compType: comp },
-        style: { width: TOPO.COMP_W, height: TOPO.COMP_H },
-      });
-      edges.push({
-        id: `edge-comp-${compId}`,
-        source: compId,
-        target: vpcId,
-        sourceHandle: 'source-bottom',
-        targetHandle: 'top',
-        type: 'bezier',
-        style: { stroke: '#475569', strokeWidth: 1.5 },
-      });
-    });
-
-    // 账号节点在 VPC 右侧（避免和 TGW 连线交叉）
+    // 账号节点在 VPC 右侧
     if (vpcConfig.accounts?.length) {
       vpcConfig.accounts.forEach((acc, ai) => {
         const accId = `${vpcId}-acc-${ai}`;
-        const accX = vpcX + TOPO.VPC_W + 16;
-        const accY = vpcY + 10 + ai * (TOPO.ACC_H + 8);
+        const accX = vpcX + TOPO.VPC_W + 12;
+        const accY = vpcY + 6 + ai * (TOPO.ACC_H + 6);
         nodes.push({
-          id: accId,
-          type: 'topoAccount',
+          id: accId, type: 'topoAccount',
           position: { x: accX, y: accY },
           data: { accountId: acc },
           style: { width: TOPO.ACC_W, height: TOPO.ACC_H },
         });
         edges.push({
-          id: `edge-acc-${accId}`,
-          source: vpcId,
-          target: accId,
-          sourceHandle: 'source-right',
-          targetHandle: 'left',
+          id: `edge-acc-${accId}`, source: vpcId, target: accId,
+          sourceHandle: 'source-right', targetHandle: 'left',
           type: 'bezier',
           style: { stroke: '#3b82f6', strokeWidth: 1.5, strokeDasharray: '4,3' },
         });
@@ -693,62 +676,13 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       });
     }
 
-    // Endpoint 节点在 VPC 右侧（账号节点下方）
-    let epOffsetY = vpcY + 10 + (vpcConfig.accounts?.length || 0) * (TOPO.ACC_H + 8);
-    if (vpcConfig.endpoints?.length) {
-      const epId = `${vpcId}-ep-iface`;
-      const epH = TOPO.EP_H + Math.ceil(vpcConfig.endpoints.length / 3) * TOPO.EP_TAG_H + 4;
-      nodes.push({
-        id: epId,
-        type: 'topoEndpoint',
-        position: { x: vpcX + TOPO.VPC_W + 16, y: epOffsetY },
-        data: { endpoints: vpcConfig.endpoints, isGateway: false },
-        style: { width: TOPO.EP_W, height: epH },
-      });
-      edges.push({
-        id: `edge-ep-${epId}`,
-        source: vpcId,
-        target: epId,
-        sourceHandle: 'source-right',
-        targetHandle: 'left',
-        type: 'bezier',
-        style: { stroke: '#8b5cf6', strokeWidth: 1.5, strokeDasharray: '4,3' },
-      });
-      epOffsetY += epH + 8;
-      maxBottomY = Math.max(maxBottomY, epOffsetY);
-    }
-    if (vpcConfig.gw_endpoints?.length) {
-      const epId = `${vpcId}-ep-gw`;
-      const epH = TOPO.EP_H + Math.ceil(vpcConfig.gw_endpoints.length / 3) * TOPO.EP_TAG_H + 4;
-      nodes.push({
-        id: epId,
-        type: 'topoEndpoint',
-        position: { x: vpcX + TOPO.VPC_W + 16, y: epOffsetY },
-        data: { endpoints: vpcConfig.gw_endpoints, isGateway: true },
-        style: { width: TOPO.EP_W, height: epH },
-      });
-      edges.push({
-        id: `edge-ep-${epId}`,
-        source: vpcId,
-        target: epId,
-        sourceHandle: 'source-right',
-        targetHandle: 'left',
-        type: 'bezier',
-        style: { stroke: '#8b5cf6', strokeWidth: 1.5, strokeDasharray: '4,3' },
-      });
-      maxBottomY = Math.max(maxBottomY, epOffsetY + epH);
-    }
-
-    // TGW ↔ VPC 连线：从 VPC 底部到 TGW 顶部（TGW 在下方）
+    // TGW ↔ VPC 连线
     if (hasTgw && hasIntraSubnet(vpcConfig.subnets)) {
       edges.push({
         id: `${mainRegion.id}-tgw-${vpcName}`,
-        source: vpcId,
-        target: `${mainRegion.id}-tgw`,
-        sourceHandle: 'source-bottom',
-        targetHandle: 'top',
-        type: 'bezier',
-        animated: true,
+        source: vpcId, target: `${mainRegion.id}-tgw`,
+        sourceHandle: 'source-bottom', targetHandle: 'top',
+        type: 'bezier', animated: true,
         style: { stroke: '#F59E0B', strokeWidth: 2 },
       });
     }
@@ -858,20 +792,28 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
           }
         }
 
-        // VPCs（TGW 下方，留出足够间距）
+        // VPCs（TGW 下方）
         const vpcStartX = regionCenterX - (peerVpcs.length * TOPO.VPC_GAP_X) / 2 + (TOPO.VPC_GAP_X - TOPO.VPC_W) / 2;
         const peerVpcY = rowY + TOPO.REGION_LABEL_H + 16 + TOPO.TGW_H + 30;
 
         peerVpcs.forEach(([vpcName, vpcConfig], vi) => {
           const vpcId = `${region.id}-${vpcName}`;
           const vpcX = vpcStartX + vi * TOPO.VPC_GAP_X;
+          const hasComps = vpcConfig.igw?.enabled || vpcConfig.nat?.enabled || vpcConfig.nfw?.enabled || vpcConfig.gwlb?.enabled;
+          const vpcH = hasComps ? TOPO.VPC_H + 8 : TOPO.VPC_H;
 
           nodes.push({
             id: vpcId,
             type: 'topoVpc',
             position: { x: vpcX, y: peerVpcY },
-            data: { label: vpcName, cidr: vpcConfig.cidr, isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint, jsonPath: vpcJsonPath(region.id, vpcName) },
-            style: { width: TOPO.VPC_W, height: TOPO.VPC_H },
+            data: {
+              label: vpcName, cidr: vpcConfig.cidr,
+              isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint,
+              hasIgw: vpcConfig.igw?.enabled, hasNat: vpcConfig.nat?.enabled,
+              hasNfw: vpcConfig.nfw?.enabled, hasGwlb: vpcConfig.gwlb?.enabled,
+              jsonPath: vpcJsonPath(region.id, vpcName),
+            },
+            style: { width: TOPO.VPC_W, height: vpcH },
           });
 
           // TGW → VPC
@@ -887,34 +829,6 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
               style: { stroke: '#F59E0B', strokeWidth: 2 },
             });
           }
-
-          // 组件 (below VPC in peer region)
-          const comps: string[] = [];
-          if (vpcConfig.igw?.enabled) comps.push('igw');
-          if (vpcConfig.nat?.enabled) comps.push('nat');
-          if (vpcConfig.nfw?.enabled) comps.push('nfw');
-          if (vpcConfig.gwlb?.enabled) comps.push('gwlb');
-
-          const compsStartX = vpcX + (TOPO.VPC_W - comps.length * TOPO.COMP_GAP + (TOPO.COMP_GAP - TOPO.COMP_W)) / 2;
-          comps.forEach((comp, ci) => {
-            const compId = `${vpcId}-comp-${comp}`;
-            nodes.push({
-              id: compId,
-              type: 'topoComponent',
-              position: { x: compsStartX + ci * TOPO.COMP_GAP, y: peerVpcY + TOPO.VPC_H + 20 },
-              data: { compType: comp },
-              style: { width: TOPO.COMP_W, height: TOPO.COMP_H },
-            });
-            edges.push({
-              id: `edge-comp-${compId}`,
-              source: vpcId,
-              target: compId,
-              sourceHandle: 'source-bottom',
-              targetHandle: 'target-top',
-              type: 'bezier',
-              style: { stroke: '#475569', strokeWidth: 1.5 },
-            });
-          });
         });
       });
     }
