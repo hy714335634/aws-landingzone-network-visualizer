@@ -583,13 +583,37 @@ const TOPO = {
   ACC_W: 120, ACC_H: 30,
   EP_W: 140, EP_H: 24, EP_TAG_H: 18,
   REGION_LABEL_W: 180, REGION_LABEL_H: 28,
-  VPC_GAP_X: 200,            // VPCs 水平间距（紧凑，组件内嵌）
+  VPC_GAP_X: 200,
   TGW_GAP_BELOW: 60,
-  PEER_COLS: 2,
-  PEER_GAP_X: 500,           // 对等区域列间距（容纳多个 VPC）
   PEER_Y_GAP: 100,
-  PEER_ROW_GAP: 280,
 };
+
+// 地域分类和颜色
+type GeoGroup = 'americas' | 'europe' | 'asia_pacific' | 'china' | 'other';
+
+const GEO_COLORS: Record<GeoGroup, { bg: string; border: string; label: string }> = {
+  americas:     { bg: 'rgba(59, 130, 246, 0.06)',  border: 'rgba(59, 130, 246, 0.25)',  label: '#60a5fa' },
+  europe:       { bg: 'rgba(34, 197, 94, 0.06)',   border: 'rgba(34, 197, 94, 0.25)',   label: '#4ade80' },
+  asia_pacific:  { bg: 'rgba(168, 85, 247, 0.06)',  border: 'rgba(168, 85, 247, 0.25)',  label: '#c084fc' },
+  china:        { bg: 'rgba(239, 68, 68, 0.06)',   border: 'rgba(239, 68, 68, 0.25)',   label: '#f87171' },
+  other:        { bg: 'rgba(148, 163, 184, 0.06)', border: 'rgba(148, 163, 184, 0.25)', label: '#94a3b8' },
+};
+
+function classifyRegion(regionId: string): GeoGroup {
+  if (regionId === 'main') return 'americas'; // default
+  if (regionId.startsWith('us-') || regionId.startsWith('ca-') || regionId.startsWith('sa-')) return 'americas';
+  if (regionId.startsWith('eu-') || regionId.startsWith('me-') || regionId.startsWith('af-') || regionId.startsWith('il-')) return 'europe';
+  if (regionId.startsWith('ap-')) return 'asia_pacific';
+  if (regionId.startsWith('cn-')) return 'china';
+  return 'other';
+}
+
+/**
+ * 计算一个对等区域在拓扑视图中需要的宽度
+ */
+function estimatePeerRegionWidth(vpcCount: number): number {
+  return Math.max(TOPO.VPC_W + 40, vpcCount * TOPO.VPC_GAP_X);
+}
 
 export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
@@ -726,75 +750,89 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
     });
   }
 
-  // ---------- 对等区域（2 列网格，居中在 TGW 下方） ----------
+  // ---------- 对等区域（按地域分组，动态布局） ----------
   const otherRegions = regions.filter(r => !r.isMain);
   if (otherRegions.length > 0) {
-    const peerBaseY = tgwBottomY + TOPO.PEER_Y_GAP;
+    // 按地域分组
+    const geoGroups = new Map<GeoGroup, typeof otherRegions>();
+    otherRegions.forEach(region => {
+      const geo = classifyRegion(region.id);
+      if (!geoGroups.has(geo)) geoGroups.set(geo, []);
+      geoGroups.get(geo)!.push(region);
+    });
 
-    for (let rowStart = 0; rowStart < otherRegions.length; rowStart += TOPO.PEER_COLS) {
-      const rowRegions = otherRegions.slice(rowStart, rowStart + TOPO.PEER_COLS);
-      const row = Math.floor(rowStart / TOPO.PEER_COLS);
-      const rowY = peerBaseY + row * TOPO.PEER_ROW_GAP;
+    let peerY = tgwBottomY + TOPO.PEER_Y_GAP;
 
-      // 居中该行
-      const rowWidth = rowRegions.length * TOPO.PEER_GAP_X;
-      const rowStartX = mainCenterX - rowWidth / 2;
+    for (const [, groupRegions] of geoGroups) {
+      const rowGap = 80;
+      // 计算每个区域宽度
+      const widths = groupRegions.map(r => estimatePeerRegionWidth(Object.keys(r.vpcs).length));
+      const totalRowWidth = widths.reduce((s, w) => s + w, 0) + (widths.length - 1) * rowGap;
+      let regionX = mainCenterX - totalRowWidth / 2;
+      let rowMaxHeight = 0;
 
-      rowRegions.forEach((region, ri) => {
-        const regionCenterX = rowStartX + ri * TOPO.PEER_GAP_X + TOPO.PEER_GAP_X / 2;
+      groupRegions.forEach((region, ri) => {
         const peerVpcs = Object.entries(region.vpcs);
         const peerHasTgw = region.tgw?.enabled;
-        const globalIdx = rowStart + ri;
+        const regionWidth = widths[ri];
+        const regionCenterX = regionX + regionWidth / 2;
+        const geo = classifyRegion(region.id);
+        const geoColor = GEO_COLORS[geo];
+
+        // 地域背景框
+        const bgPad = 20;
+        const bgH = TOPO.REGION_LABEL_H + 16 + TOPO.TGW_H + 30 + TOPO.VPC_H + 20 + bgPad * 2;
+        nodes.push({
+          id: `topo-geo-bg-${region.id}`,
+          type: 'topoRegionLabel',
+          position: { x: regionX - bgPad, y: peerY - bgPad },
+          data: { label: '', isMain: false },
+          style: {
+            width: regionWidth + bgPad * 2, height: bgH,
+            background: geoColor.bg, border: `1px solid ${geoColor.border}`,
+            borderRadius: '12px', opacity: 0.6,
+          },
+          zIndex: -1,
+        });
 
         // 区域标签
         nodes.push({
           id: `topo-label-${region.id}`,
           type: 'topoRegionLabel',
-          position: { x: regionCenterX - TOPO.REGION_LABEL_W / 2, y: rowY },
+          position: { x: regionCenterX - TOPO.REGION_LABEL_W / 2, y: peerY },
           data: { label: region.name.toUpperCase(), isMain: false },
           style: { width: TOPO.REGION_LABEL_W },
         });
 
-        // TGW（标签下方留出间距）
+        // TGW
         if (peerHasTgw) {
           const tgwX = regionCenterX - TOPO.TGW_W / 2;
-          const tgwY = rowY + TOPO.REGION_LABEL_H + 16;
+          const tgwY = peerY + TOPO.REGION_LABEL_H + 16;
           nodes.push({
-            id: `${region.id}-tgw`,
-            type: 'topoTgw',
+            id: `${region.id}-tgw`, type: 'topoTgw',
             position: { x: tgwX, y: tgwY },
             data: { label: 'TGW', asn: region.tgw!.asn, cidr: region.tgw!.cidr, peer: region.tgw!.peer, jsonPath: tgwJsonPath(region.id) },
             style: { width: TOPO.TGW_W, height: TOPO.TGW_H },
           });
 
-          // TGW 对等连线到主区域 TGW（使用 bezier 避免交叉）
           if (region.tgw!.peer && mainRegion.tgw?.enabled) {
-            // 根据对等区域位置选择不同的 source handle
-            const col = globalIdx % TOPO.PEER_COLS;
-            const sourceHandle = otherRegions.length <= 1 ? 'source-bottom'
-              : col === 0 ? 'source-left' : 'source-right';
-
             edges.push({
               id: `tgw-peer-${region.id}`,
-              source: `${mainRegionId}-tgw`,
-              target: `${region.id}-tgw`,
-              sourceHandle,
-              targetHandle: 'top',
-              type: 'bezier',
-              animated: true,
+              source: `${mainRegionId}-tgw`, target: `${region.id}-tgw`,
+              sourceHandle: 'source-bottom', targetHandle: 'top',
+              type: 'bezier', animated: true,
               label: 'Peering',
               labelStyle: { fill: '#F59E0B', fontWeight: 600, fontSize: 10 },
               labelBgStyle: { fill: '#1e293b', fillOpacity: 0.9 },
-              labelBgPadding: [4, 3] as [number, number],
-              labelBgBorderRadius: 4,
+              labelBgPadding: [4, 3] as [number, number], labelBgBorderRadius: 4,
               style: { stroke: '#F59E0B', strokeWidth: 2, strokeDasharray: '8,4' },
             });
           }
         }
 
-        // VPCs（TGW 下方）
+        // VPCs
         const vpcStartX = regionCenterX - (peerVpcs.length * TOPO.VPC_GAP_X) / 2 + (TOPO.VPC_GAP_X - TOPO.VPC_W) / 2;
-        const peerVpcY = rowY + TOPO.REGION_LABEL_H + 16 + TOPO.TGW_H + 30;
+        const peerVpcY = peerY + TOPO.REGION_LABEL_H + 16 + TOPO.TGW_H + 30;
 
         peerVpcs.forEach(([vpcName, vpcConfig], vi) => {
           const vpcId = `${region.id}-${vpcName}`;
@@ -803,8 +841,7 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
           const vpcH = hasComps ? TOPO.VPC_H + 8 : TOPO.VPC_H;
 
           nodes.push({
-            id: vpcId,
-            type: 'topoVpc',
+            id: vpcId, type: 'topoVpc',
             position: { x: vpcX, y: peerVpcY },
             data: {
               label: vpcName, cidr: vpcConfig.cidr,
@@ -816,21 +853,22 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
             style: { width: TOPO.VPC_W, height: vpcH },
           });
 
-          // TGW → VPC
           if (peerHasTgw && hasIntraSubnet(vpcConfig.subnets)) {
             edges.push({
               id: `${region.id}-tgw-${vpcName}`,
-              source: `${region.id}-tgw`,
-              target: vpcId,
-              sourceHandle: 'source-bottom',
-              targetHandle: 'top',
-              type: 'bezier',
-              animated: true,
+              source: `${region.id}-tgw`, target: vpcId,
+              sourceHandle: 'source-bottom', targetHandle: 'top',
+              type: 'bezier', animated: true,
               style: { stroke: '#F59E0B', strokeWidth: 2 },
             });
           }
         });
+
+        rowMaxHeight = Math.max(rowMaxHeight, bgH);
+        regionX += regionWidth + rowGap;
       });
+
+      peerY += rowMaxHeight + 40;
     }
   }
 
