@@ -8,7 +8,7 @@ import {
   useNodesState,
   useEdgesState,
 } from '@xyflow/react';
-import type { Node, Edge, NodeTypes } from '@xyflow/react';
+import type { Node, Edge, NodeTypes, NodeMouseHandler } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import type { NetworkConfig } from '../types/network';
@@ -30,12 +30,11 @@ import TopoRegionLabelNode from './nodes/TopoRegionLabelNode';
 import TopoEndpointNode from './nodes/TopoEndpointNode';
 import TopoDxNode from './nodes/TopoDxNode';
 import FileUpload from './FileUpload';
-import JsonEditor from './JsonEditor';
+import JsonEditorPanel from './JsonEditorPanel';
 import Toolbar from './Toolbar';
 import type { ViewMode } from './Toolbar';
 import SidePanel from './SidePanel';
 
-// 在组件外部定义 nodeTypes
 const nodeTypes: NodeTypes = {
   vpc: VpcNode,
   tgw: TgwNode,
@@ -56,25 +55,58 @@ function NetworkFlowInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [config, setConfig] = useState<NetworkConfig | null>(null);
+  const [jsonText, setJsonText] = useState('');
   const [sourceFile, setSourceFile] = useState<File | null>(null);
-  const [showEditor, setShowEditor] = useState(false);
   const [showUpload, setShowUpload] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('detailed');
   const [validationMessages, setValidationMessages] = useState<ValidationMessage[]>([]);
   const [showValidation, setShowValidation] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  // 保留完整原始 JSON 对象（包含未可视化字段如安全组）
+  const fullConfigRef = useRef<unknown>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reactFlowInstance = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { takeSnapshot, undo, redo, canUndo, canRedo, reset } = useUndoRedo([], []);
 
-  // 根据视图模式解析配置
   const parseConfig = useCallback((networkConfig: NetworkConfig, mode: ViewMode) => {
     if (mode === 'simplified') {
       return parseNetworkConfigSimplified(networkConfig);
     }
     return parseNetworkConfig(networkConfig);
   }, []);
+
+  // 同步 config → jsonText
+  const syncJsonText = useCallback((cfg: unknown) => {
+    setJsonText(JSON.stringify(cfg, null, 2));
+  }, []);
+
+  // 应用配置并刷新可视化
+  const applyConfig = useCallback((networkConfig: NetworkConfig, fullObj?: unknown) => {
+    fullConfigRef.current = fullObj || networkConfig;
+    setConfig(networkConfig);
+    syncJsonText(fullConfigRef.current);
+
+    const msgs = validateNetworkConfig(networkConfig);
+    setValidationMessages(msgs);
+    if (msgs.some(m => m.level === 'error' || m.level === 'warning')) {
+      setShowValidation(true);
+    } else {
+      setShowValidation(false);
+    }
+
+    const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(networkConfig, viewMode);
+    setNodes(parsedNodes as Node[]);
+    setEdges(parsedEdges as Edge[]);
+    reset(parsedNodes as Node[], parsedEdges as Edge[]);
+
+    setTimeout(() => {
+      reactFlowInstance.current?.fitView({ padding: 0.1 });
+    }, 100);
+  }, [parseConfig, viewMode, setNodes, setEdges, reset, syncJsonText]);
 
   // 键盘快捷键
   useEffect(() => {
@@ -83,68 +115,61 @@ function NetworkFlowInner() {
         if (e.shiftKey) {
           e.preventDefault();
           const state = redo();
-          if (state) {
-            setNodes(state.nodes as Node[]);
-            setEdges(state.edges as Edge[]);
-          }
+          if (state) { setNodes(state.nodes as Node[]); setEdges(state.edges as Edge[]); }
         } else {
           e.preventDefault();
           const state = undo();
-          if (state) {
-            setNodes(state.nodes as Node[]);
-            setEdges(state.edges as Edge[]);
-          }
+          if (state) { setNodes(state.nodes as Node[]); setEdges(state.edges as Edge[]); }
         }
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
         e.preventDefault();
         const state = redo();
-        if (state) {
-          setNodes(state.nodes as Node[]);
-          setEdges(state.edges as Edge[]);
-        }
+        if (state) { setNodes(state.nodes as Node[]); setEdges(state.edges as Edge[]); }
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo, setNodes, setEdges]);
 
+  // 文件加载
   const handleFileLoad = useCallback((newConfig: unknown) => {
     const networkConfig = newConfig as NetworkConfig;
-    setConfig(networkConfig);
-    const msgs = validateNetworkConfig(networkConfig);
-    setValidationMessages(msgs);
-    if (msgs.some(m => m.level === 'error' || m.level === 'warning')) {
-      setShowValidation(true);
-    }
-    const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(networkConfig, viewMode);
-    setNodes(parsedNodes as Node[]);
-    setEdges(parsedEdges as Edge[]);
     setShowUpload(false);
-    reset(parsedNodes as Node[], parsedEdges as Edge[]);
+    applyConfig(networkConfig, newConfig);
+  }, [applyConfig]);
 
-    setTimeout(() => {
-      reactFlowInstance.current?.fitView({ padding: 0.1 });
-    }, 100);
-  }, [setNodes, setEdges, reset, parseConfig, viewMode]);
+  // 编辑器文本应用
+  const handleEditorApply = useCallback((text: string): string | null => {
+    try {
+      const parsed = JSON.parse(text);
+      const networkConfig = parsed as NetworkConfig;
+      fullConfigRef.current = parsed;
+      setConfig(networkConfig);
+      setJsonText(text);
 
-  const handleSaveConfig = useCallback((newConfig: unknown) => {
-    const networkConfig = newConfig as NetworkConfig;
-    setConfig(networkConfig);
-    const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(networkConfig, viewMode);
-    setNodes(parsedNodes as Node[]);
-    setEdges(parsedEdges as Edge[]);
-    setShowEditor(false);
-    reset(parsedNodes as Node[], parsedEdges as Edge[]);
+      const msgs = validateNetworkConfig(networkConfig);
+      setValidationMessages(msgs);
+      setShowValidation(msgs.some(m => m.level === 'error' || m.level === 'warning'));
 
-    setTimeout(() => {
-      reactFlowInstance.current?.fitView({ padding: 0.1 });
-    }, 100);
-  }, [setNodes, setEdges, reset, parseConfig, viewMode]);
+      const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(networkConfig, viewMode);
+      setNodes(parsedNodes as Node[]);
+      setEdges(parsedEdges as Edge[]);
+      reset(parsedNodes as Node[], parsedEdges as Edge[]);
 
+      setTimeout(() => {
+        reactFlowInstance.current?.fitView({ padding: 0.1 });
+      }, 100);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }, [parseConfig, viewMode, setNodes, setEdges, reset]);
+
+  // 下载完整 JSON（包含未可视化字段）
   const handleDownload = useCallback(() => {
-    if (!config) return;
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const data = fullConfigRef.current || config;
+    if (!data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -174,7 +199,6 @@ function NetworkFlowInner() {
     }
   }, [handleFileLoad]);
 
-  // 刷新：重新加载源文件
   const handleRefresh = useCallback(() => {
     if (sourceFile) {
       const reader = new FileReader();
@@ -188,17 +212,10 @@ function NetworkFlowInner() {
       };
       reader.readAsText(sourceFile);
     } else if (config) {
-      const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(config, viewMode);
-      setNodes(parsedNodes as Node[]);
-      setEdges(parsedEdges as Edge[]);
-      reset(parsedNodes as Node[], parsedEdges as Edge[]);
-      setTimeout(() => {
-        reactFlowInstance.current?.fitView({ padding: 0.1 });
-      }, 100);
+      applyConfig(config, fullConfigRef.current);
     }
-  }, [sourceFile, config, handleFileLoad, setNodes, setEdges, reset, parseConfig, viewMode]);
+  }, [sourceFile, config, handleFileLoad, applyConfig]);
 
-  // 视图模式切换
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     if (mode === viewMode || !config) return;
     setViewMode(mode);
@@ -206,10 +223,7 @@ function NetworkFlowInner() {
     setNodes(parsedNodes as Node[]);
     setEdges(parsedEdges as Edge[]);
     reset(parsedNodes as Node[], parsedEdges as Edge[]);
-
-    setTimeout(() => {
-      reactFlowInstance.current?.fitView({ padding: 0.1 });
-    }, 100);
+    setTimeout(() => { reactFlowInstance.current?.fitView({ padding: 0.1 }); }, 100);
   }, [viewMode, config, parseConfig, setNodes, setEdges, reset]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -219,38 +233,40 @@ function NetworkFlowInner() {
 
   const handleUndo = useCallback(() => {
     const state = undo();
-    if (state) {
-      setNodes(state.nodes as Node[]);
-      setEdges(state.edges as Edge[]);
-    }
+    if (state) { setNodes(state.nodes as Node[]); setEdges(state.edges as Edge[]); }
   }, [undo, setNodes, setEdges]);
 
   const handleRedo = useCallback(() => {
     const state = redo();
-    if (state) {
-      setNodes(state.nodes as Node[]);
-      setEdges(state.edges as Edge[]);
-    }
+    if (state) { setNodes(state.nodes as Node[]); setEdges(state.edges as Edge[]); }
   }, [redo, setNodes, setEdges]);
 
-  // 处理配置更新（从 SidePanel 添加/删除 VPC）
-  const handleConfigUpdate = useCallback((newConfig: NetworkConfig) => {
-    setConfig(newConfig);
-    const { nodes: parsedNodes, edges: parsedEdges } = parseConfig(newConfig, viewMode);
-    setNodes(parsedNodes as Node[]);
-    setEdges(parsedEdges as Edge[]);
-    reset(parsedNodes as Node[], parsedEdges as Edge[]);
+  // 节点点击 → 联动编辑器
+  const handleNodeClick: NodeMouseHandler = useCallback((_event, node) => {
+    const jp = (node.data as Record<string, unknown>)?.jsonPath as string | undefined;
+    if (jp) {
+      setSelectedPath(jp);
+      // 如果编辑器未打开，自动打开
+      if (!editorOpen) {
+        setEditorOpen(true);
+      }
+    }
+  }, [editorOpen]);
 
-    setTimeout(() => {
-      reactFlowInstance.current?.fitView({ padding: 0.1 });
-    }, 100);
-  }, [setNodes, setEdges, reset, parseConfig, viewMode]);
+  // 画布空白处点击 → 清除选中
+  const handlePaneClick = useCallback(() => {
+    setSelectedPath(null);
+  }, []);
+
+  const handleConfigUpdate = useCallback((newConfig: NetworkConfig) => {
+    applyConfig(newConfig, newConfig);
+  }, [applyConfig]);
 
   return (
     <div className="network-flow">
       <Toolbar
         onUpload={handleUploadClick}
-        onEdit={() => setShowEditor(true)}
+        onEdit={() => setEditorOpen(!editorOpen)}
         onDownload={handleDownload}
         onRefresh={handleRefresh}
         onZoomIn={() => reactFlowInstance.current?.zoomIn()}
@@ -275,6 +291,17 @@ function NetworkFlowInner() {
         name="file-upload"
       />
 
+      {/* 左侧 JSON 编辑器面板 */}
+      {config && (
+        <JsonEditorPanel
+          jsonText={jsonText}
+          selectedPath={selectedPath}
+          onApply={handleEditorApply}
+          isOpen={editorOpen}
+          onToggle={() => setEditorOpen(!editorOpen)}
+        />
+      )}
+
       <SidePanel
         config={config}
         onConfigUpdate={handleConfigUpdate}
@@ -290,6 +317,8 @@ function NetworkFlowInner() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeDragStop={handleNodeDragStop}
+            onNodeClick={handleNodeClick}
+            onPaneClick={handlePaneClick}
             nodeTypes={nodeTypes}
             onInit={(instance) => {
               reactFlowInstance.current = instance;
@@ -318,14 +347,6 @@ function NetworkFlowInner() {
             />
           </ReactFlow>
         </div>
-      )}
-
-      {showEditor && config && (
-        <JsonEditor
-          config={config}
-          onSave={handleSaveConfig}
-          onClose={() => setShowEditor(false)}
-        />
       )}
 
       {showValidation && validationMessages.length > 0 && (

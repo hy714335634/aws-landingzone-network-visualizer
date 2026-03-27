@@ -148,6 +148,21 @@ function hasIntraSubnet(subnets: SubnetsConfig): boolean {
 }
 
 /**
+ * 计算资源的 JSON 路径
+ */
+function vpcJsonPath(regionId: string, vpcName: string): string {
+  return regionId === 'main' ? `vpcs.${vpcName}` : `${regionId}.vpcs.${vpcName}`;
+}
+
+function tgwJsonPath(regionId: string): string {
+  return regionId === 'main' ? 'tgw' : `${regionId}.tgw`;
+}
+
+function tgwTableJsonPath(regionId: string, tableName: string): string {
+  return regionId === 'main' ? `tgw.tables.${tableName}` : `${regionId}.tgw.tables.${tableName}`;
+}
+
+/**
  * 过滤掉 enabled: false 的 VPC
  */
 function filterEnabledVpcs(vpcs: Record<string, VpcConfig>): Record<string, VpcConfig> {
@@ -391,15 +406,16 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
       id: `region-${mainRegion.id}`,
       type: 'region',
       position: { x: 0, y: currentY },
-      data: { label: mainRegion.name.toUpperCase(), isMain: true },
+      data: { label: mainRegion.name.toUpperCase(), isMain: true, jsonPath: 'vpcs' },
       style: { width: regionWidth, height: regionContentHeight },
     });
 
     vpcEntries.forEach(([vpcName, vpcConfig], index) => {
       const pos = positions[index];
+      const jp = vpcJsonPath(mainRegion.id, vpcName);
       const vpcNodes = createVpcWithAzLayout(
         vpcName, vpcConfig, mainRegion.id,
-        pos.x, pos.y, pos.width, pos.height
+        pos.x, pos.y, pos.width, pos.height, jp
       );
       nodes.push(...vpcNodes);
 
@@ -476,16 +492,17 @@ export function parseNetworkConfig(config: NetworkConfig): { nodes: Node[]; edge
           id: `region-${region.id}`,
           type: 'region',
           position: { x: regionX, y: currentY },
-          data: { label: region.name.toUpperCase(), isMain: false, isPeer: region.tgw?.peer },
+          data: { label: region.name.toUpperCase(), isMain: false, isPeer: region.tgw?.peer, jsonPath: region.id },
           style: { width: dim.width, height: dim.height },
         });
 
         let vpcY = LAYOUT.REGION_HEADER_HEIGHT;
         vpcEntries.forEach(([vpcName, vpcConfig], index) => {
           const vpcDim = actualDim.vpcDimensions[index];
+          const jp = vpcJsonPath(region.id, vpcName);
           const vpcNodes = createVpcWithAzLayout(
             vpcName, vpcConfig, region.id,
-            LAYOUT.REGION_PADDING, vpcY, vpcDim.width, vpcDim.height
+            LAYOUT.REGION_PADDING, vpcY, vpcDim.width, vpcDim.height, jp
           );
           nodes.push(...vpcNodes);
 
@@ -618,7 +635,7 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       id: vpcId,
       type: 'topoVpc',
       position: { x: vpcX, y: vpcY },
-      data: { label: vpcName, cidr: vpcConfig.cidr, isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint },
+      data: { label: vpcName, cidr: vpcConfig.cidr, isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint, jsonPath: vpcJsonPath(mainRegion.id, vpcName) },
       style: { width: TOPO.VPC_W, height: TOPO.VPC_H },
     });
 
@@ -747,7 +764,7 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
       id: `${mainRegion.id}-tgw`,
       type: 'topoTgw',
       position: { x: tgwX, y: tgwY },
-      data: { label: 'TGW', asn: mainRegion.tgw!.asn, cidr: mainRegion.tgw!.cidr, peer: false },
+      data: { label: 'TGW', asn: mainRegion.tgw!.asn, cidr: mainRegion.tgw!.cidr, peer: false, jsonPath: tgwJsonPath(mainRegion.id) },
       style: { width: TOPO.TGW_W, height: TOPO.TGW_H },
     });
   }
@@ -812,7 +829,7 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
             id: `${region.id}-tgw`,
             type: 'topoTgw',
             position: { x: tgwX, y: tgwY },
-            data: { label: 'TGW', asn: region.tgw!.asn, cidr: region.tgw!.cidr, peer: region.tgw!.peer },
+            data: { label: 'TGW', asn: region.tgw!.asn, cidr: region.tgw!.cidr, peer: region.tgw!.peer, jsonPath: tgwJsonPath(region.id) },
             style: { width: TOPO.TGW_W, height: TOPO.TGW_H },
           });
 
@@ -853,7 +870,7 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
             id: vpcId,
             type: 'topoVpc',
             position: { x: vpcX, y: peerVpcY },
-            data: { label: vpcName, cidr: vpcConfig.cidr, isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint },
+            data: { label: vpcName, cidr: vpcConfig.cidr, isHub: vpcConfig.is_hub, isEndpoint: vpcConfig.is_endpoint, jsonPath: vpcJsonPath(region.id, vpcName) },
             style: { width: TOPO.VPC_W, height: TOPO.VPC_H },
           });
 
@@ -974,6 +991,7 @@ function createTgwNode(tgw: TgwConfig, regionId: string, x: number, y: number, h
       peer: tgw.peer,
       tables: tgw.tables,
       connects: tgw.connects,
+      jsonPath: tgwJsonPath(regionId),
     },
     parentId: `region-${regionId}`,
     extent: 'parent',
@@ -989,10 +1007,12 @@ function createVpcWithAzLayout(
   x: number,
   y: number,
   width: number,
-  height: number
+  height: number,
+  jsonPath?: string
 ): Node[] {
   const nodes: Node[] = [];
   const vpcId = `${regionId}-${vpcName}`;
+  const jp = jsonPath || vpcJsonPath(regionId, vpcName);
 
   // VPC 主节点
   nodes.push({
@@ -1009,6 +1029,7 @@ function createVpcWithAzLayout(
       hasNat: vpcConfig.nat?.enabled,
       hasNfw: vpcConfig.nfw?.enabled,
       hasGwlb: vpcConfig.gwlb?.enabled,
+      jsonPath: jp,
     },
     parentId: `region-${regionId}`,
     extent: 'parent',
