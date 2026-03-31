@@ -95,7 +95,7 @@ export default function Toolbar({
     return () => window.removeEventListener('keydown', handler);
   }, [hasConfig]);
 
-  // Close on click outside
+  // Close on click outside (including ReactFlow canvas)
   useEffect(() => {
     if (!searchOpen) return;
     const handler = (e: MouseEvent) => {
@@ -104,8 +104,9 @@ export default function Toolbar({
         setQuery('');
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    // Use capture phase to catch events before ReactFlow swallows them
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
   }, [searchOpen]);
 
   // Build search index
