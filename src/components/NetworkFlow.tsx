@@ -745,6 +745,7 @@ function NetworkFlowInner() {
             minZoom={0.1}
             maxZoom={2}
             defaultViewport={{ x: 0, y: 0, zoom: 0.5 }}
+            proOptions={{ hideAttribution: true }}
           >
             <Background color="#334155" gap={20} />
             <Controls />
