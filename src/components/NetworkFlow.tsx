@@ -125,6 +125,16 @@ function computeChanges(base: NetworkConfig, current: NetworkConfig): ChangeLogE
   return changes;
 }
 
+// Ghost node for deleted resources in diff view
+import { memo } from 'react';
+const DiffGhostNode = memo(({ data }: { data: Record<string, unknown> }) => (
+  <div className="diff-ghost-node">
+    <div className="ghost-label">{String(data.label || '')}</div>
+    <div className="ghost-detail">{String(data.detail || '')}</div>
+  </div>
+));
+DiffGhostNode.displayName = 'DiffGhostNode';
+
 const nodeTypes: NodeTypes = {
   vpc: VpcNode,
   tgw: TgwNode,
@@ -143,6 +153,7 @@ const nodeTypes: NodeTypes = {
   overlayCgw: CgwNode,
   overlayVgw: VgwNode,
   overlayPrivateLink: PrivateLinkNode,
+  diffGhost: DiffGhostNode as unknown as NodeTypes[string],
 };
 
 function NetworkFlowInner() {
@@ -689,6 +700,28 @@ function NetworkFlowInner() {
                   }
                   return n;
                 });
+
+                // Add ghost nodes for deleted resources (not in current canvas)
+                const currentIds = new Set(mapped.map(n => n.id));
+                let ghostIdx = 0;
+                const ghostNodes: Node[] = [];
+                deepDiff.resources
+                  .filter(r => r.changeType === 'removed' && !currentIds.has(r.nodeId))
+                  .forEach(r => {
+                    const kindLabel = r.kind === 'VPC' ? `VPC: ${r.name}` : r.kind === 'TGW' ? `TGW (${r.regionId})` : `${r.kind}: ${r.name}`;
+                    ghostNodes.push({
+                      id: `ghost-${r.nodeId}`,
+                      type: 'diffGhost',
+                      position: { x: -400, y: ghostIdx * 80 },
+                      data: { label: `DEL  ${kindLabel}`, detail: `${r.regionId} — ${r.fields.length} fields removed` },
+                      className: 'diff-removed',
+                      style: { width: 240 },
+                    } as Node);
+                    ghostIdx++;
+                  });
+                if (ghostNodes.length > 0) {
+                  mapped = [...mapped, ...ghostNodes];
+                }
               }
               // Path highlighting
               if (highlightedPath) {
