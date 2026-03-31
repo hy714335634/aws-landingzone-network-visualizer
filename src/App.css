@@ -3675,3 +3675,219 @@
 
 .tsi-label { font-size: 0.8rem; color: #e2e8f0; font-weight: 500; white-space: nowrap; }
 .tsi-detail { font-size: 0.7rem; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; }
+
+/* ============================================
+   Toolbar Dropdown (Diff menu)
+   ============================================ */
+
+.toolbar-dropdown-wrap { position: relative; }
+
+.toolbar-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  padding: 4px;
+  z-index: 500;
+}
+
+.toolbar-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.toolbar-dd-item:hover { background: rgba(59,130,246,0.12); }
+.toolbar-dd-close { color: #f87171; }
+.toolbar-dd-close:hover { background: rgba(239,68,68,0.12); }
+
+/* ============================================
+   Diff Panel (right side tab)
+   ============================================ */
+
+.diff-panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.diff-panel::-webkit-scrollbar { width: 5px; }
+.diff-panel::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+
+.diff-empty {
+  padding: 24px;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+/* Summary bar */
+.diff-summary {
+  padding: 10px 12px;
+  background: rgba(30,41,59,0.6);
+  border: 1px solid #334155;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.diff-summary-counts { display: flex; gap: 8px; flex-wrap: wrap; }
+.diff-count {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.diff-count-added   { background: rgba(34,197,94,0.15); color: #4ade80; }
+.diff-count-modified { background: rgba(245,158,11,0.15); color: #fbbf24; }
+.diff-count-removed  { background: rgba(239,68,68,0.15); color: #f87171; }
+.diff-base-label { font-size: 0.68rem; color: #64748b; }
+
+/* Groups */
+.diff-group { margin-bottom: 2px; }
+.diff-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  transition: background 0.1s;
+}
+.diff-group-header:hover { background: rgba(51,65,85,0.4); }
+.diff-group-name { flex: 1; }
+.diff-group-count {
+  font-size: 0.68rem;
+  color: #64748b;
+  font-weight: 400;
+}
+
+.diff-group-items { padding-left: 8px; }
+
+/* Resource item */
+.diff-resource {
+  border-left: 3px solid transparent;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 4px;
+}
+.diff-resource-added   { border-left-color: #22c55e; }
+.diff-resource-removed { border-left-color: #ef4444; }
+.diff-resource-modified { border-left-color: #f59e0b; }
+
+.diff-resource-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 0 6px 6px 0;
+  transition: background 0.1s;
+}
+.diff-resource-header:hover { background: rgba(51,65,85,0.3); }
+
+.diff-expand-btn {
+  background: none; border: none; color: #64748b; cursor: pointer; padding: 0;
+  display: flex; align-items: center;
+}
+
+.diff-change-icon { display: flex; align-items: center; }
+.diff-ci-added   { color: #4ade80; }
+.diff-ci-removed { color: #f87171; }
+.diff-ci-modified { color: #fbbf24; }
+
+.diff-resource-name { font-size: 0.78rem; color: #e2e8f0; font-weight: 500; }
+.diff-resource-region { font-size: 0.68rem; color: #64748b; margin-left: auto; }
+
+.diff-field-count {
+  font-size: 0.65rem;
+  color: #64748b;
+  background: rgba(51,65,85,0.4);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Field diff rows */
+.diff-fields {
+  padding: 4px 8px 8px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.diff-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.diff-field-added   { background: rgba(34,197,94,0.08); }
+.diff-field-removed { background: rgba(239,68,68,0.08); }
+.diff-field-changed { background: rgba(245,158,11,0.08); }
+
+.diff-field-icon {
+  width: 14px;
+  font-weight: 700;
+  text-align: center;
+  flex-shrink: 0;
+}
+.diff-field-added .diff-field-icon   { color: #4ade80; }
+.diff-field-removed .diff-field-icon { color: #f87171; }
+.diff-field-changed .diff-field-icon { color: #fbbf24; }
+
+.diff-field-path { color: #94a3b8; min-width: 60px; }
+.diff-field-old  { color: #f87171; text-decoration: line-through; }
+.diff-field-new  { color: #4ade80; }
+.diff-field-arrow { color: #64748b; font-size: 0.65rem; }
+
+/* Canvas diff node labels (NEW / MOD / DEL) */
+.react-flow__node.diff-added::after,
+.react-flow__node.diff-removed::after,
+.react-flow__node.diff-modified::after {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  z-index: 10;
+  pointer-events: none;
+}
+.react-flow__node.diff-added::after {
+  content: 'NEW';
+  background: #22c55e;
+  color: #052e16;
+}
+.react-flow__node.diff-removed::after {
+  content: 'DEL';
+  background: #ef4444;
+  color: #450a0a;
+}
+.react-flow__node.diff-modified::after {
+  content: 'MOD';
+  background: #f59e0b;
+  color: #451a03;
+}

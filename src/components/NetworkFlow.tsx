@@ -40,7 +40,8 @@ import { useOverlayStore } from '../hooks/useOverlayStore';
 import { VpnNode, CgwNode, VgwNode, PrivateLinkNode } from './nodes/OverlayNodes';
 import { renderOverlayResources } from '../utils/overlayRenderer';
 import type { ReachabilityResult } from '../utils/reachabilityAnalyzer';
-// SearchOverlay available as standalone, but search is now embedded in Toolbar
+import { diffConfigs } from '../utils/configDiff';
+import type { DiffSummary } from '../utils/configDiff';
 
 // ============================================
 // Change tracking types & logic
@@ -582,11 +583,11 @@ function NetworkFlowInner() {
     diffFileRef.current?.click();
   }, []);
 
-  const diffChanges = useMemo(() => {
+  const deepDiff: DiffSummary | null = useMemo(() => {
     if (!showDiff || !config) return null;
     const base = diffBaseConfig || (baseConfigRef.current as NetworkConfig | null);
     if (!base) return null;
-    return computeChanges(base as NetworkConfig, config);
+    return diffConfigs(base, config);
   }, [showDiff, config, diffBaseConfig]);
 
   return (
@@ -662,6 +663,10 @@ function NetworkFlowInner() {
         changeLog={changeLog}
         onHighlightPath={handleHighlightPath}
         onClearHighlight={handleClearHighlight}
+        diffBaseConfig={showDiff ? (diffBaseConfig || baseConfigRef.current as NetworkConfig | null) : null}
+        diffBaseName={diffBaseConfig ? 'uploaded file' : 'initial'}
+        showDiff={showDiff}
+        onFocusNode={focusNodeById}
       />
 
       {showUpload && !config ? (
@@ -671,25 +676,17 @@ function NetworkFlowInner() {
           <ReactFlow
             nodes={(() => {
               let mapped = nodes;
-              // Diff view overlay
-              if (diffChanges && diffChanges.length > 0) {
+              // Diff view overlay (deep diff)
+              if (deepDiff && deepDiff.resources.length > 0) {
                 const diffMap = new Map<string, 'added' | 'removed' | 'modified'>();
-                diffChanges.forEach(c => {
-                  // Map jsonPath to possible node IDs
-                  const jp = c.jsonPath;
-                  if (c.kind === 'VPC') {
-                    const parts = jp.split('.');
-                    const vpcName = parts[parts.length - 1];
-                    const regionId = parts.length > 2 ? parts[0] : 'main';
-                    diffMap.set(`${regionId}-${vpcName}`, c.type);
-                  } else if (c.kind === 'TGW') {
-                    const regionId = jp.startsWith('tgw') ? 'main' : jp.split('.')[0];
-                    diffMap.set(`${regionId}-tgw`, c.type);
-                  }
-                });
+                deepDiff.resources.forEach(r => diffMap.set(r.nodeId, r.changeType));
                 mapped = mapped.map(n => {
                   const dt = diffMap.get(n.id);
                   if (dt) return { ...n, className: `${n.className || ''} diff-${dt}`.trim() };
+                  // Dim unchanged nodes slightly
+                  if (n.type !== 'topoRegionLabel' && n.type !== 'region') {
+                    return { ...n, style: { ...n.style, opacity: 0.7 } };
+                  }
                   return n;
                 });
               }
@@ -729,7 +726,17 @@ function NetworkFlowInner() {
                     }
                     return { ...e, style: { ...e.style, opacity: 0.12 }, animated: false };
                   })
-                : edges
+                : deepDiff && deepDiff.edgeChanges.length > 0
+                  ? (() => {
+                      const edgeDiffMap = new Map(deepDiff.edgeChanges.map(ec => [ec.id, ec.type]));
+                      return edges.map(e => {
+                        const dt = edgeDiffMap.get(e.id);
+                        if (dt === 'added') return { ...e, style: { stroke: '#22c55e', strokeWidth: 3, strokeDasharray: '8,4' }, animated: true };
+                        if (dt === 'removed') return { ...e, style: { stroke: '#ef4444', strokeWidth: 3, strokeDasharray: '6,6', opacity: 0.5 }, animated: false };
+                        return e;
+                      });
+                    })()
+                  : edges
             }
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}

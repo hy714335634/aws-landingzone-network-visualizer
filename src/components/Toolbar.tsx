@@ -9,6 +9,47 @@ import { useLanguage } from '../i18n/LanguageContext';
 
 export type ViewMode = 'detailed' | 'simplified';
 
+function DiffDropdown({ showDiff, onDiffToggle, onDiffUpload }: {
+  showDiff?: boolean; onDiffToggle?: () => void; onDiffUpload?: () => void;
+}) {
+  const { t } = useLanguage();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
+  }, [open]);
+
+  return (
+    <div className="toolbar-dropdown-wrap" ref={ref}>
+      <button className={`toolbar-btn ${showDiff ? 'toolbar-btn-active' : ''}`}
+        onClick={() => setOpen(!open)} title={t('配置对比', 'Diff')}>
+        <GitCompareArrows size={16} />
+      </button>
+      {open && (
+        <div className="toolbar-dropdown">
+          <button className="toolbar-dd-item" onClick={() => { onDiffToggle?.(); setOpen(false); }}>
+            {showDiff ? t('关闭对比', 'Close Diff') : t('与初始配置对比', 'Compare with Initial')}
+          </button>
+          <button className="toolbar-dd-item" onClick={() => { onDiffUpload?.(); setOpen(false); }}>
+            <UploadIcon size={13} /> {t('上传文件对比', 'Upload File to Compare')}
+          </button>
+          {showDiff && (
+            <button className="toolbar-dd-item toolbar-dd-close" onClick={() => { onDiffToggle?.(); setOpen(false); }}>
+              <X size={13} /> {t('关闭对比', 'Close Diff')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ROOT_LEVEL_KEYS = ['vpcs', 'tgw', 'resolver', 'dx', 'variables'];
 
 /** Parse CIDR string to numeric range */
@@ -260,14 +301,8 @@ export default function Toolbar({
               </button>
             </>
           )}
-          {/* Diff */}
-          <button className={`toolbar-btn ${showDiff ? 'toolbar-btn-active' : ''}`}
-            onClick={onDiffToggle} title={t('配置对比', 'Diff View')}>
-            <GitCompareArrows size={16} />
-          </button>
-          <button className="toolbar-btn" onClick={onDiffUpload} title={t('上传对比文件', 'Upload Diff File')}>
-            <UploadIcon size={14} />
-          </button>
+          {/* Diff dropdown */}
+          <DiffDropdown showDiff={showDiff} onDiffToggle={onDiffToggle} onDiffUpload={onDiffUpload} />
           {/* Zoom */}
           <button className="toolbar-btn" onClick={onZoomIn} title={t('放大', 'Zoom In')}><ZoomIn size={16} /></button>
           <button className="toolbar-btn" onClick={onZoomOut} title={t('缩小', 'Zoom Out')}><ZoomOut size={16} /></button>

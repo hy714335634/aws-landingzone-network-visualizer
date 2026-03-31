@@ -3,7 +3,7 @@ import {
   ChevronDown, ChevronRight, ChevronLeft, ChevronRight as ChevronRightIcon,
   Plus, Trash2, Save, FolderTree, Globe, Cloud, Network, Radio, Cable,
   Shield, Layers, Link2, Server, Settings, ToggleLeft, ToggleRight, Wifi,
-  GitCommit, PlusCircle, MinusCircle, Edit3, Waypoints,
+  GitCommit, PlusCircle, MinusCircle, Edit3, Waypoints, GitCompareArrows,
 } from 'lucide-react';
 import type {
   NetworkConfig, VpcConfig, TgwConfig, ResolverConfig, DxConfig,
@@ -12,6 +12,7 @@ import type {
 import SubnetEditor from './SubnetEditor';
 import OverlayPanel from './OverlayPanel';
 import ReachabilityPanel from './ReachabilityPanel';
+import DiffPanel from './DiffPanel';
 import type { OverlayStore } from '../hooks/useOverlayStore';
 import { useLanguage } from '../i18n/LanguageContext';
 import type { ChangeLogEntry } from './NetworkFlow';
@@ -48,6 +49,10 @@ interface ResourceManagerProps {
   changeLog?: ChangeLogEntry[];
   onHighlightPath?: (result: ReachabilityResult) => void;
   onClearHighlight?: () => void;
+  diffBaseConfig?: NetworkConfig | null;
+  diffBaseName?: string;
+  showDiff?: boolean;
+  onFocusNode?: (nodeId: string) => void;
 }
 
 // ============================================
@@ -1057,12 +1062,12 @@ function AddResourcePanel({ config, onConfigUpdate, onDone }: {
 // Main ResourceManager Component
 // ============================================
 
-export default function ResourceManager({ config, onConfigUpdate, selectedPath: _selectedPath, onSelectPath, onFocusOverlay, overlayStore, changeLog = [], onHighlightPath, onClearHighlight }: ResourceManagerProps) {
+export default function ResourceManager({ config, onConfigUpdate, selectedPath: _selectedPath, onSelectPath, onFocusOverlay, overlayStore, changeLog = [], onHighlightPath, onClearHighlight, diffBaseConfig, diffBaseName, showDiff, onFocusNode }: ResourceManagerProps) {
   void _selectedPath;
   const { t } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['region-main']));
-  const [activeTab, setActiveTab] = useState<'tree' | 'add' | 'overlay' | 'changes' | 'reachability'>('tree');
+  const [activeTab, setActiveTab] = useState<'tree' | 'add' | 'overlay' | 'changes' | 'reachability' | 'diff'>('tree');
   const [selectedItem, setSelectedItem] = useState<TreeItem | null>(null);
 
   const tree = useMemo(() => config ? buildTree(config, t) : [], [config, t]);
@@ -1307,6 +1312,11 @@ export default function ResourceManager({ config, onConfigUpdate, selectedPath: 
           <button className={`rm-tab ${activeTab === 'reachability' ? 'active' : ''}`} onClick={() => setActiveTab('reachability')}>
             <Waypoints size={14} /> {t('可达性', 'Reach')}
           </button>
+          {showDiff && diffBaseConfig && (
+            <button className={`rm-tab ${activeTab === 'diff' ? 'active' : ''}`} onClick={() => setActiveTab('diff')}>
+              <GitCompareArrows size={14} /> {t('对比', 'Diff')}
+            </button>
+          )}
         </div>
 
         <div className="rm-body">
@@ -1331,6 +1341,14 @@ export default function ResourceManager({ config, onConfigUpdate, selectedPath: 
               config={config}
               onHighlightPath={onHighlightPath || (() => {})}
               onClearHighlight={onClearHighlight || (() => {})}
+            />
+          )}
+          {activeTab === 'diff' && diffBaseConfig && (
+            <DiffPanel
+              currentConfig={config}
+              baseConfig={diffBaseConfig}
+              baseName={diffBaseName}
+              onFocusNode={onFocusNode}
             />
           )}
           {activeTab === 'changes' && (() => {
