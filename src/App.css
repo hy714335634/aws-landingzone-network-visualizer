@@ -86,14 +86,17 @@
   position: absolute;
   top: 16px;
   left: 16px;
+  right: 360px; /* leave space for resource panel */
   z-index: 20;
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   background: #1e293b;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid #334155;
   transition: left 0.3s ease;
+  align-items: center;
 }
 
 .toolbar.toolbar-shifted {
@@ -141,6 +144,10 @@
 .toolbar-btn:hover:not(.disabled) {
   background: #334155;
   color: #f59e0b;
+}
+.toolbar-btn.toolbar-btn-active {
+  background: rgba(59,130,246,0.2);
+  color: #60a5fa;
 }
 
 .toolbar-btn.disabled {

@@ -166,6 +166,8 @@ function NetworkFlowInner() {
   } | null>(null);
 
   const [showDiff, setShowDiff] = useState(false);
+  const [diffBaseConfig, setDiffBaseConfig] = useState<NetworkConfig | null>(null);
+  const diffFileRef = useRef<HTMLInputElement>(null);
 
   const overlayStore = useOverlayStore();
 
@@ -545,13 +547,47 @@ function NetworkFlowInner() {
     focusNodeById(nodeId);
   }, [focusNodeById]);
 
-  // Diff view toggle
+  // Diff: compare against uploaded base OR initial snapshot
+  const handleDiffFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string) as NetworkConfig;
+        setDiffBaseConfig(parsed);
+        setShowDiff(true);
+      } catch { /* invalid json */ }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, []);
+
+  const handleDiffToggle = useCallback(() => {
+    if (showDiff) {
+      setShowDiff(false);
+    } else {
+      // If no explicit diff base and no changes from initial load, prompt file upload
+      const base = diffBaseConfig || (baseConfigRef.current as NetworkConfig | null);
+      if (base && config && JSON.stringify(base) !== JSON.stringify(config)) {
+        setShowDiff(true);
+      } else {
+        // Upload a file to compare against
+        diffFileRef.current?.click();
+      }
+    }
+  }, [showDiff, diffBaseConfig, config]);
+
+  const handleDiffUpload = useCallback(() => {
+    diffFileRef.current?.click();
+  }, []);
+
   const diffChanges = useMemo(() => {
     if (!showDiff || !config) return null;
-    const base = baseConfigRef.current as Record<string, unknown> | null;
+    const base = diffBaseConfig || (baseConfigRef.current as NetworkConfig | null);
     if (!base) return null;
     return computeChanges(base as NetworkConfig, config);
-  }, [showDiff, config]);
+  }, [showDiff, config, diffBaseConfig]);
 
   return (
     <div className="network-flow">
@@ -580,6 +616,9 @@ function NetworkFlowInner() {
           setNodes(ns => ns.map(n => n.type === 'tgw' ? { ...n, data: { ...n.data, collapseSignal: -Date.now() } } : n));
         }}
         onSearchSelect={handleSearchSelect}
+        showDiff={showDiff}
+        onDiffToggle={handleDiffToggle}
+        onDiffUpload={handleDiffUpload}
       />
 
       <input
@@ -727,16 +766,16 @@ function NetworkFlowInner() {
         </div>
       )}
 
-      {/* Diff toggle */}
-      {config && changeLog.length > 0 && (
-        <button
-          className={`diff-toggle-btn ${showDiff ? 'active' : ''}`}
-          onClick={() => setShowDiff(d => !d)}
-          title={t('切换变更高亮 (Diff View)', 'Toggle Diff View')}
-        >
-          {showDiff ? t('隐藏 Diff', 'Hide Diff') : t('显示 Diff', 'Show Diff')}
-        </button>
-      )}
+      {/* Diff file input (hidden) */}
+      <input
+        ref={diffFileRef}
+        type="file"
+        accept=".json,application/json"
+        onChange={handleDiffFileSelect}
+        hidden
+        id="diff-file-input"
+        name="diff-file"
+      />
 
       {showValidation && validationMessages.length > 0 && (
         <div className="validation-panel">

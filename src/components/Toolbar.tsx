@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Upload, Edit, Download, ZoomIn, ZoomOut, Maximize, Undo2, Redo2,
   RefreshCw, LayoutGrid, List, Image, ChevronsDownUp, ChevronsUpDown,
-  Search, Cloud, Network, Cable, X,
+  Search, Cloud, Network, Cable, X, GitCompareArrows, Upload as UploadIcon,
 } from 'lucide-react';
 import type { NetworkConfig, VpcConfig, RegionConfig } from '../types/network';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -65,6 +65,9 @@ interface ToolbarProps {
   onCollapseAllTables?: () => void;
   onExpandAllTables?: () => void;
   onSearchSelect?: (nodeId: string, jsonPath: string) => void;
+  showDiff?: boolean;
+  onDiffToggle?: () => void;
+  onDiffUpload?: () => void;
 }
 
 export default function Toolbar({
@@ -72,6 +75,7 @@ export default function Toolbar({
   onZoomIn, onZoomOut, onFitView, onUndo, onRedo,
   canUndo, canRedo, hasConfig, viewMode, onViewModeChange, editorOpen,
   config, onCollapseAllTables, onExpandAllTables, onSearchSelect,
+  showDiff, onDiffToggle, onDiffUpload,
 }: ToolbarProps) {
   const { t } = useLanguage();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -243,23 +247,33 @@ export default function Toolbar({
         </div>
       )}
 
-      {/* Collapse/Expand all TGW route tables */}
-      {hasConfig && viewMode === 'detailed' && (
+      {hasConfig && (
         <div className="toolbar-group">
-          <button className="toolbar-btn" onClick={onCollapseAllTables} title={t('折叠所有路由表', 'Collapse All Tables')}>
-            <ChevronsDownUp size={16} />
+          {/* Collapse/Expand */}
+          {viewMode === 'detailed' && (
+            <>
+              <button className="toolbar-btn" onClick={onCollapseAllTables} title={t('折叠路由表', 'Collapse Tables')}>
+                <ChevronsDownUp size={16} />
+              </button>
+              <button className="toolbar-btn" onClick={onExpandAllTables} title={t('展开路由表', 'Expand Tables')}>
+                <ChevronsUpDown size={16} />
+              </button>
+            </>
+          )}
+          {/* Diff */}
+          <button className={`toolbar-btn ${showDiff ? 'toolbar-btn-active' : ''}`}
+            onClick={onDiffToggle} title={t('配置对比', 'Diff View')}>
+            <GitCompareArrows size={16} />
           </button>
-          <button className="toolbar-btn" onClick={onExpandAllTables} title={t('展开所有路由表', 'Expand All Tables')}>
-            <ChevronsUpDown size={16} />
+          <button className="toolbar-btn" onClick={onDiffUpload} title={t('上传对比文件', 'Upload Diff File')}>
+            <UploadIcon size={14} />
           </button>
+          {/* Zoom */}
+          <button className="toolbar-btn" onClick={onZoomIn} title={t('放大', 'Zoom In')}><ZoomIn size={16} /></button>
+          <button className="toolbar-btn" onClick={onZoomOut} title={t('缩小', 'Zoom Out')}><ZoomOut size={16} /></button>
+          <button className="toolbar-btn" onClick={onFitView} title={t('适应视图', 'Fit View')}><Maximize size={16} /></button>
         </div>
       )}
-
-      <div className="toolbar-group">
-        <button className="toolbar-btn" onClick={onZoomIn} title={t('放大', 'Zoom In')}><ZoomIn size={16} /></button>
-        <button className="toolbar-btn" onClick={onZoomOut} title={t('缩小', 'Zoom Out')}><ZoomOut size={16} /></button>
-        <button className="toolbar-btn" onClick={onFitView} title={t('适应视图', 'Fit View')}><Maximize size={16} /></button>
-      </div>
 
       {/* Search box */}
       {hasConfig && (
