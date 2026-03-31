@@ -39,6 +39,8 @@ import ResourceManager from './ResourceManager';
 import { useOverlayStore } from '../hooks/useOverlayStore';
 import { VpnNode, CgwNode, VgwNode, PrivateLinkNode } from './nodes/OverlayNodes';
 import { renderOverlayResources } from '../utils/overlayRenderer';
+import type { ReachabilityResult } from '../utils/reachabilityAnalyzer';
+import SearchOverlay from './SearchOverlay';
 
 // ============================================
 // Change tracking types & logic
@@ -156,6 +158,15 @@ function NetworkFlowInner() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+  const [highlightedPath, setHighlightedPath] = useState<{
+    nodeIds: Set<string>;
+    edgeIds: Set<string>;
+    sourceId: string;
+    destId: string;
+  } | null>(null);
+
+  const [showSearch, setShowSearch] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
 
   const overlayStore = useOverlayStore();
 
@@ -214,7 +225,7 @@ function NetworkFlowInner() {
     }
     // Overlay resources are always "added" (manual operations)
     overlayStore.resources.forEach(r => {
-      const cfg = r.config as Record<string, string>;
+      const cfg = r.config as unknown as Record<string, string>;
       const typeLabel = r.type === 'vpn' ? 'Site-to-Site VPN'
         : r.type === 'cgw' ? 'Customer Gateway'
         : r.type === 'vgw' ? 'Virtual Private GW'
@@ -283,6 +294,12 @@ function NetworkFlowInner() {
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+K / Cmd+K → search
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        if (config) setShowSearch(prev => !prev);
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         if (e.shiftKey) {
           e.preventDefault();
@@ -504,15 +521,44 @@ function NetworkFlowInner() {
     }
   }, [editorOpen]);
 
-  // 画布空白处点击 → 清除选中 + 收起编辑器
+  // 画布空白处点击 → 清除选中 + 收起编辑器 + 清除路径高亮
   const handlePaneClick = useCallback(() => {
     setSelectedPath(null);
     setEditorOpen(false);
+    setHighlightedPath(null);
+  }, []);
+
+  // Reachability path highlighting
+  const handleHighlightPath = useCallback((result: ReachabilityResult) => {
+    setHighlightedPath({
+      nodeIds: new Set(result.nodeIds),
+      edgeIds: new Set(result.edgeIds),
+      sourceId: result.sourceId,
+      destId: result.destId,
+    });
+  }, []);
+
+  const handleClearHighlight = useCallback(() => {
+    setHighlightedPath(null);
   }, []);
 
   const handleConfigUpdate = useCallback((newConfig: NetworkConfig) => {
     applyConfig(newConfig, newConfig);
   }, [applyConfig]);
+
+  // Search: select a node by ID and jsonPath
+  const handleSearchSelect = useCallback((nodeId: string, jsonPath: string) => {
+    setSelectedPath(jsonPath);
+    focusNodeById(nodeId);
+  }, [focusNodeById]);
+
+  // Diff view toggle
+  const diffChanges = useMemo(() => {
+    if (!showDiff || !config) return null;
+    const base = baseConfigRef.current as Record<string, unknown> | null;
+    if (!base) return null;
+    return computeChanges(base as NetworkConfig, config);
+  }, [showDiff, config]);
 
   return (
     <div className="network-flow">
@@ -574,6 +620,8 @@ function NetworkFlowInner() {
         onFocusOverlay={focusNodeById}
         overlayStore={overlayStore}
         changeLog={changeLog}
+        onHighlightPath={handleHighlightPath}
+        onClearHighlight={handleClearHighlight}
       />
 
       {showUpload && !config ? (
@@ -581,12 +629,68 @@ function NetworkFlowInner() {
       ) : (
         <div className="react-flow-wrapper">
           <ReactFlow
-            nodes={highlightedNodeId
-              ? nodes.map(n => n.id === highlightedNodeId
-                ? { ...n, className: `${n.className || ''} node-highlight`.trim() }
-                : n)
-              : nodes}
-            edges={edges}
+            nodes={(() => {
+              let mapped = nodes;
+              // Diff view overlay
+              if (diffChanges && diffChanges.length > 0) {
+                const diffMap = new Map<string, 'added' | 'removed' | 'modified'>();
+                diffChanges.forEach(c => {
+                  // Map jsonPath to possible node IDs
+                  const jp = c.jsonPath;
+                  if (c.kind === 'VPC') {
+                    const parts = jp.split('.');
+                    const vpcName = parts[parts.length - 1];
+                    const regionId = parts.length > 2 ? parts[0] : 'main';
+                    diffMap.set(`${regionId}-${vpcName}`, c.type);
+                  } else if (c.kind === 'TGW') {
+                    const regionId = jp.startsWith('tgw') ? 'main' : jp.split('.')[0];
+                    diffMap.set(`${regionId}-tgw`, c.type);
+                  }
+                });
+                mapped = mapped.map(n => {
+                  const dt = diffMap.get(n.id);
+                  if (dt) return { ...n, className: `${n.className || ''} diff-${dt}`.trim() };
+                  return n;
+                });
+              }
+              // Path highlighting
+              if (highlightedPath) {
+                return mapped.map(n => {
+                  if (n.id === highlightedPath.sourceId) return { ...n, className: `${n.className || ''} path-source`.trim() };
+                  if (n.id === highlightedPath.destId) return { ...n, className: `${n.className || ''} path-dest`.trim() };
+                  if (highlightedPath.nodeIds.has(n.id)) return { ...n, className: `${n.className || ''} path-hop`.trim() };
+                  if (n.type === 'topoRegionLabel' || n.type === 'region') return n;
+                  return { ...n, style: { ...n.style, opacity: 0.25 } };
+                });
+              }
+              if (highlightedNodeId) {
+                return mapped.map(n => n.id === highlightedNodeId
+                  ? { ...n, className: `${n.className || ''} node-highlight`.trim() }
+                  : n);
+              }
+              return mapped;
+            })()}
+            edges={
+              highlightedPath
+                ? edges.map(e => {
+                    if (highlightedPath.edgeIds.has(e.id)) {
+                      return {
+                        ...e,
+                        style: {
+                          stroke: '#22c55e', strokeWidth: 4,
+                          filter: 'drop-shadow(0 0 8px rgba(34,197,94,0.6))',
+                          strokeDasharray: '12,12',
+                          animation: 'pathFlow 0.6s linear infinite',
+                        },
+                        animated: false,
+                        zIndex: 1000,
+                        className: 'path-flow-edge',
+                      };
+                    }
+                    return { ...e, style: { ...e.style, opacity: 0.12 }, animated: false };
+                  })
+                : edges
+            }
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeDragStop={handleNodeDragStop}
@@ -620,6 +724,22 @@ function NetworkFlowInner() {
             />
           </ReactFlow>
         </div>
+      )}
+
+      {/* Search overlay (Ctrl+K) */}
+      {showSearch && config && (
+        <SearchOverlay config={config} onSelect={handleSearchSelect} onClose={() => setShowSearch(false)} />
+      )}
+
+      {/* Diff toggle */}
+      {config && changeLog.length > 0 && (
+        <button
+          className={`diff-toggle-btn ${showDiff ? 'active' : ''}`}
+          onClick={() => setShowDiff(d => !d)}
+          title={t('切换变更高亮 (Diff View)', 'Toggle Diff View')}
+        >
+          {showDiff ? t('隐藏 Diff', 'Hide Diff') : t('显示 Diff', 'Show Diff')}
+        </button>
       )}
 
       {showValidation && validationMessages.length > 0 && (

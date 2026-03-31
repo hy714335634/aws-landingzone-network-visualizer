@@ -3,7 +3,7 @@ import {
   ChevronDown, ChevronRight, ChevronLeft, ChevronRight as ChevronRightIcon,
   Plus, Trash2, Save, FolderTree, Globe, Cloud, Network, Radio, Cable,
   Shield, Layers, Link2, Server, Settings, ToggleLeft, ToggleRight, Wifi,
-  GitCommit, PlusCircle, MinusCircle, Edit3,
+  GitCommit, PlusCircle, MinusCircle, Edit3, Waypoints,
 } from 'lucide-react';
 import type {
   NetworkConfig, VpcConfig, TgwConfig, ResolverConfig, DxConfig,
@@ -11,9 +11,11 @@ import type {
 } from '../types/network';
 import SubnetEditor from './SubnetEditor';
 import OverlayPanel from './OverlayPanel';
+import ReachabilityPanel from './ReachabilityPanel';
 import type { OverlayStore } from '../hooks/useOverlayStore';
 import { useLanguage } from '../i18n/LanguageContext';
 import type { ChangeLogEntry } from './NetworkFlow';
+import type { ReachabilityResult } from '../utils/reachabilityAnalyzer';
 
 // ============================================
 // Types
@@ -44,6 +46,8 @@ interface ResourceManagerProps {
   onFocusOverlay?: (overlayId: string) => void;
   overlayStore: OverlayStore;
   changeLog?: ChangeLogEntry[];
+  onHighlightPath?: (result: ReachabilityResult) => void;
+  onClearHighlight?: () => void;
 }
 
 // ============================================
@@ -365,7 +369,7 @@ function VpcPropertyEditor({ config, regionId, vpcName, vpcConfig, onUpdate, onD
     vpc.is_hub = form.isHub || undefined;
     vpc.is_endpoint = form.isEndpoint || undefined;
     vpc.accounts = form.accounts.split(',').map(a => a.trim()).filter(Boolean);
-    if (vpc.accounts.length === 0) delete (vpc as Record<string, unknown>).accounts;
+    if (vpc.accounts.length === 0) delete (vpc as unknown as Record<string, unknown>).accounts;
     vpc.igw = form.enableIgw ? { enabled: true, ...vpc.igw } : undefined;
     vpc.nat = form.enableNat ? { enabled: true } : undefined;
     vpc.nfw = form.enableNfw ? { enabled: true, ...vpc.nfw } : undefined;
@@ -374,11 +378,11 @@ function VpcPropertyEditor({ config, regionId, vpcName, vpcConfig, onUpdate, onD
     vpc.dns = { hostnames: form.dnsHostnames, support: form.dnsSupport };
     vpc.log = form.enableLog ? { enabled: true, ...vpc.log } : undefined;
     vpc.peers = form.peers.split(',').map(a => a.trim()).filter(Boolean);
-    if (vpc.peers.length === 0) delete (vpc as Record<string, unknown>).peers;
+    if (vpc.peers.length === 0) delete (vpc as unknown as Record<string, unknown>).peers;
     vpc.endpoints = form.endpoints.split(',').map(a => a.trim()).filter(Boolean);
-    if (vpc.endpoints.length === 0) delete (vpc as Record<string, unknown>).endpoints;
+    if (vpc.endpoints.length === 0) delete (vpc as unknown as Record<string, unknown>).endpoints;
     vpc.gw_endpoints = form.gwEndpoints.split(',').map(a => a.trim()).filter(Boolean);
-    if (vpc.gw_endpoints.length === 0) delete (vpc as Record<string, unknown>).gw_endpoints;
+    if (vpc.gw_endpoints.length === 0) delete (vpc as unknown as Record<string, unknown>).gw_endpoints;
 
     onUpdate(newConfig);
   };
@@ -479,7 +483,7 @@ function TgwPropertyEditor({ config, regionId, tgw, onUpdate, onDelete }: {
     t.asn = form.asn ? parseInt(form.asn) : undefined;
     t.cidr = form.cidr;
     t.cidrs = form.cidrs.split(',').map(s => s.trim()).filter(Boolean);
-    if (t.cidrs.length === 0) delete (t as Record<string, unknown>).cidrs;
+    if (t.cidrs.length === 0) delete (t as unknown as Record<string, unknown>).cidrs;
     t.name = form.name || undefined;
     t.description = form.description || undefined;
     t.peer = form.peer || undefined;
@@ -1053,11 +1057,12 @@ function AddResourcePanel({ config, onConfigUpdate, onDone }: {
 // Main ResourceManager Component
 // ============================================
 
-export default function ResourceManager({ config, onConfigUpdate, selectedPath, onSelectPath, onFocusOverlay, overlayStore, changeLog = [] }: ResourceManagerProps) {
+export default function ResourceManager({ config, onConfigUpdate, selectedPath: _selectedPath, onSelectPath, onFocusOverlay, overlayStore, changeLog = [], onHighlightPath, onClearHighlight }: ResourceManagerProps) {
+  void _selectedPath;
   const { t } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['region-main']));
-  const [activeTab, setActiveTab] = useState<'tree' | 'add' | 'overlay' | 'changes'>('tree');
+  const [activeTab, setActiveTab] = useState<'tree' | 'add' | 'overlay' | 'changes' | 'reachability'>('tree');
   const [selectedItem, setSelectedItem] = useState<TreeItem | null>(null);
 
   const tree = useMemo(() => config ? buildTree(config, t) : [], [config, t]);
@@ -1218,7 +1223,7 @@ export default function ResourceManager({ config, onConfigUpdate, selectedPath, 
               const targetVpcs = regionId === 'main' ? newConfig.vpcs! : (newConfig[regionId] as RegionConfig).vpcs;
               targetVpcs[vpcName].subnets = subnets;
               // Remove legacy subnet_names when switching to map format
-              delete (targetVpcs[vpcName] as Record<string, unknown>).subnet_names;
+              delete (targetVpcs[vpcName] as unknown as Record<string, unknown>).subnet_names;
               onConfigUpdate(newConfig);
             }}
           />
@@ -1299,6 +1304,9 @@ export default function ResourceManager({ config, onConfigUpdate, selectedPath, 
             <GitCommit size={14} /> {t('变更', 'Changes')}
             {changeLog.length > 0 && <span className="rm-tab-badge">{changeLog.length}</span>}
           </button>
+          <button className={`rm-tab ${activeTab === 'reachability' ? 'active' : ''}`} onClick={() => setActiveTab('reachability')}>
+            <Waypoints size={14} /> {t('可达性', 'Reach')}
+          </button>
         </div>
 
         <div className="rm-body">
@@ -1317,6 +1325,13 @@ export default function ResourceManager({ config, onConfigUpdate, selectedPath, 
           )}
           {activeTab === 'overlay' && (
             <OverlayPanel store={overlayStore} tgwRegions={tgwRegions} vpcNames={vpcNames} tgwConfigs={tgwConfigs} config={config} onConfigUpdate={onConfigUpdate} onFocusOverlay={onFocusOverlay} />
+          )}
+          {activeTab === 'reachability' && (
+            <ReachabilityPanel
+              config={config}
+              onHighlightPath={onHighlightPath || (() => {})}
+              onClearHighlight={onClearHighlight || (() => {})}
+            />
           )}
           {activeTab === 'changes' && (() => {
             const jsonChanges = changeLog.filter(e => e.source === 'json');

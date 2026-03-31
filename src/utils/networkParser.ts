@@ -158,9 +158,10 @@ function tgwJsonPath(regionId: string): string {
   return regionId === 'main' ? 'tgw' : `${regionId}.tgw`;
 }
 
+/* tgwTableJsonPath - reserved for future use
 function tgwTableJsonPath(regionId: string, tableName: string): string {
   return regionId === 'main' ? `tgw.tables.${tableName}` : `${regionId}.tgw.tables.${tableName}`;
-}
+} */
 
 /**
  * 过滤掉 enabled: false 的 VPC
@@ -320,7 +321,7 @@ function calculateMindMapRegionSize(maxVpcWidth: number, vpcTotalHeight: number,
 }
 
 // 检测主区域名称 - 从对等区域的路由表推断
-function detectMainRegionName(config: NetworkConfig): string {
+function detectMainRegionName(_config: NetworkConfig): string {
   return 'main';
 }
 
@@ -832,12 +833,31 @@ export function parseNetworkConfigSimplified(config: NetworkConfig): { nodes: No
           });
 
           if (region.tgw!.peer && mainRegion.tgw?.enabled) {
+            // Count peer routes in both directions for peering stats
+            let peerRouteCount = 0;
+            if (mainRegion.tgw?.tables) {
+              Object.values(mainRegion.tgw.tables).forEach(t => {
+                if (t.routes) Object.entries(t.routes).forEach(([k, v]) => {
+                  if (v === 'peer' && (k === region.id || k === '*')) peerRouteCount++;
+                });
+                if (t.associations?.includes('peer')) peerRouteCount++;
+              });
+            }
+            if (region.tgw!.tables) {
+              Object.values(region.tgw!.tables).forEach(t => {
+                if (t.routes) Object.entries(t.routes).forEach(([, v]) => {
+                  if (v === 'peer') peerRouteCount++;
+                });
+                if (t.associations?.includes('peer')) peerRouteCount++;
+              });
+            }
+            const statsLabel = peerRouteCount > 0 ? `Peering · ${peerRouteCount} routes` : 'Peering';
             edges.push({
               id: `tgw-peer-${region.id}`,
               source: `${mainRegionId}-tgw`, target: `${region.id}-tgw`,
               sourceHandle: 'source-bottom', targetHandle: 'top',
               type: 'bezier', animated: true,
-              label: 'Peering',
+              label: statsLabel,
               labelStyle: { fill: '#F59E0B', fontWeight: 600, fontSize: 10 },
               labelBgStyle: { fill: '#1e293b', fillOpacity: 0.9 },
               labelBgPadding: [4, 3] as [number, number], labelBgBorderRadius: 4,

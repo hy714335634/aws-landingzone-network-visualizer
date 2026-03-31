@@ -1,7 +1,7 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { Handle, Position, useReactFlow } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import { Network, ArrowRight, Ban, Link2, Server, Plug, Router } from 'lucide-react';
+import { Network, ArrowRight, Ban, Link2, Server, Plug, Router, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface RouteTableConfig {
   associations?: string[];
@@ -92,9 +92,19 @@ const getActualTarget = (key: string, target: string): string => {
 const TgwNode = memo(({ data, id }: NodeProps) => {
   const nodeData = data as unknown as TgwNodeData;
   const { setEdges } = useReactFlow();
-  
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+
   // 从节点 ID 提取 regionId (格式: regionId-tgw)
   const regionId = id.replace('-tgw', '');
+
+  const toggleTable = useCallback((tableName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedTables(prev => {
+      const next = new Set(prev);
+      if (next.has(tableName)) next.delete(tableName); else next.add(tableName);
+      return next;
+    });
+  }, []);
   
   const getRouteIcon = (key: string, target: string) => {
     const type = getRouteType(key, target);
@@ -285,20 +295,33 @@ const TgwNode = memo(({ data, id }: NodeProps) => {
 
       {nodeData.tables && Object.keys(nodeData.tables).length > 0 && (
         <div className="tgw-tables">
-          {Object.entries(nodeData.tables).map(([tableName, tableConfig]) => (
-            <div key={tableName} className="route-table">
-              <div className="route-table-header">
+          {Object.entries(nodeData.tables).map(([tableName, tableConfig]) => {
+            const isExpanded = expandedTables.has(tableName);
+            const assocCount = tableConfig.associations?.length || 0;
+            const propCount = tableConfig.propagations?.length || 0;
+            const routeCount = tableConfig.routes ? Object.keys(tableConfig.routes).length : 0;
+            return (
+            <div key={tableName} className={`route-table ${isExpanded ? 'expanded' : 'collapsed'}`}>
+              <div className="route-table-header rt-clickable" onClick={(e) => toggleTable(tableName, e)}>
+                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 <Server size={12} />
                 <span className="table-name">路由表: {tableName.toUpperCase()}</span>
+                {!isExpanded && (
+                  <span className="rt-summary">
+                    {assocCount > 0 && <span className="rt-count">{assocCount} 关联</span>}
+                    {propCount > 0 && <span className="rt-count">{propCount} 传播</span>}
+                    {routeCount > 0 && <span className="rt-count">{routeCount} 路由</span>}
+                  </span>
+                )}
               </div>
-              
-              {tableConfig.associations && tableConfig.associations.length > 0 && (
+
+              {isExpanded && tableConfig.associations && tableConfig.associations.length > 0 && (
                 <div className="table-section">
                   <span className="section-label">关联 (使用此表):</span>
                   <div className="section-items">
                     {tableConfig.associations.map((vpc, i) => (
-                      <span 
-                        key={i} 
+                      <span
+                        key={i}
                         className={`assoc-tag hoverable ${vpc === 'peer' ? 'peer-assoc' : ''}`}
                         onMouseEnter={() => vpc !== 'peer' && handleAssocMouseEnter(vpc)}
                         onMouseLeave={handleRouteMouseLeave}
@@ -310,14 +333,14 @@ const TgwNode = memo(({ data, id }: NodeProps) => {
                   </div>
                 </div>
               )}
-              
-              {tableConfig.propagations && tableConfig.propagations.length > 0 && (
+
+              {isExpanded && tableConfig.propagations && tableConfig.propagations.length > 0 && (
                 <div className="table-section">
                   <span className="section-label">传播 (学习路由):</span>
                   <div className="section-items">
                     {tableConfig.propagations.map((vpc, i) => (
-                      <span 
-                        key={i} 
+                      <span
+                        key={i}
                         className="prop-tag hoverable"
                         onMouseEnter={() => handleAssocMouseEnter(vpc)}
                         onMouseLeave={handleRouteMouseLeave}
@@ -329,20 +352,20 @@ const TgwNode = memo(({ data, id }: NodeProps) => {
                   </div>
                 </div>
               )}
-              
-              {tableConfig.routes && Object.keys(tableConfig.routes).length > 0 && (
+
+              {isExpanded && tableConfig.routes && Object.keys(tableConfig.routes).length > 0 && (
                 <div className="table-routes">
                   <div className="routes-header">静态路由:</div>
                   {Object.entries(tableConfig.routes).map(([dest, target], i) => {
                     const type = getRouteType(dest, target);
                     const isHoverable = type !== 'blackhole';
                     return (
-                      <div 
-                        key={i} 
+                      <div
+                        key={i}
                         className={`route-entry ${getRouteClass(dest, target)} ${isHoverable ? 'hoverable' : ''}`}
                         onMouseEnter={() => isHoverable && handleRouteMouseEnter(dest, target)}
                         onMouseLeave={handleRouteMouseLeave}
-                        title={type === 'blackhole' ? '黑洞路由 - 丢弃匹配流量' : 
+                        title={type === 'blackhole' ? '黑洞路由 - 丢弃匹配流量' :
                                type === 'peer' ? `通过 TGW 对等连接路由到 ${getActualTarget(dest, target)}` :
                                `路由到 ${target} VPC`}
                       >
@@ -356,7 +379,8 @@ const TgwNode = memo(({ data, id }: NodeProps) => {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       

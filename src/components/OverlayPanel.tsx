@@ -41,7 +41,7 @@ function overlayIcon(type: string, size = 14) {
 }
 
 function overlayLabel(r: OverlayResource): string {
-  const c = r.config as Record<string, unknown>;
+  const c = r.config as unknown as Record<string, unknown>;
   return (c.name as string) || r.type;
 }
 

@@ -29,7 +29,6 @@ function findJsonPathRange(
   // 在文本中逐行搜索
   const lines = text.split('\n');
   let depth = 0;
-  let parentDepth = 0;
   let parentMatchIndex = 0;
   let foundStart = -1;
   let braceCount = 0;
@@ -44,7 +43,7 @@ function findJsonPathRange(
       const parentPattern = new RegExp(`^"${escapeRegex(parentKey)}"\\s*:`);
       if (parentPattern.test(trimmed) && depth === parentMatchIndex + 1) {
         parentMatchIndex++;
-        parentDepth = depth;
+        void depth; // parentDepth tracking removed
       }
     }
 

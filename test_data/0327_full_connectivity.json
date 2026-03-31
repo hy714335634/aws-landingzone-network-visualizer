@@ -1,0 +1,244 @@
+{
+	"vpcs": {
+		"hub": {
+			"is_hub": true,
+			"cidr": "10.200.224.0/24",
+			"nat": { "enabled": true },
+			"igw": { "enabled": true },
+			"subnets": [[[4,0],[4,1]],[[2,1],[2,2]]]
+		},
+		"prod": {
+			"cidr": "10.200.128.0/24",
+			"accounts": ["944837225417"],
+			"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+		},
+		"test": {
+			"cidr": "10.200.129.0/24",
+			"accounts": ["667778672538"],
+			"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+		},
+		"ai-it-prod": {
+			"cidr": "10.200.130.0/24",
+			"accounts": ["838261167460"],
+			"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+		},
+		"cb-us-application": {
+			"cidr": "10.200.131.0/24",
+			"accounts": ["966448714772"],
+			"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+		},
+		"cb-eln-us-prod": {
+			"cidr": "10.200.132.0/24",
+			"accounts": ["884057990986"],
+			"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+		},
+		"cb-eln-us-test": {
+			"cidr": "10.200.133.0/24",
+			"accounts": ["328281319730"],
+			"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+		},
+		"cb-dsb-database": {
+			"enabled": false,
+			"accounts": ["980195619968"]
+		}
+	},
+	"tgw": {
+		"enabled": true,
+		"asn": 64520,
+		"cidr": "10.200.128.0/19",
+		"tables": {
+			"pre": {
+				"associations": [
+					"prod", "test", "ai-it-prod",
+					"cb-us-application", "cb-eln-us-prod", "cb-eln-us-test"
+				],
+				"routes": {
+					"*": "hub",
+					"tgw": "blackhole"
+				}
+			},
+			"post": {
+				"associations": ["hub", "peer"],
+				"propagations": [
+					"prod", "test", "ai-it-prod",
+					"cb-us-application", "cb-eln-us-prod", "cb-eln-us-test"
+				],
+				"routes": {
+					"us-west-1": "peer",
+					"ap-east-1": "peer",
+					"eu-central-1": "peer",
+					"eu-west-2": "peer",
+					"179.179.179.0/24": "peer"
+				}
+			}
+		}
+	},
+	"us-west-1": {
+		"vpcs": {
+			"hub": {
+				"is_hub": true,
+				"cidr": "10.200.225.0/24",
+				"nat": { "enabled": true },
+				"igw": { "enabled": true },
+				"subnets": [[[4,8],[4,9]],[[2,0],[2,1]]]
+			},
+			"cb-labvantage-prod": {
+				"cidr": "10.200.32.0/24",
+				"accounts": ["215671569550"],
+				"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+			},
+			"cb-labvantage-test": {
+				"cidr": "10.200.33.0/24",
+				"accounts": ["420609645996"],
+				"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+			},
+			"cb-eln-us-prod": {
+				"cidr": "10.200.34.0/24",
+				"accounts": ["884057990986"],
+				"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+			},
+			"cb-dsb-database": {
+				"cidr": "10.200.35.0/24",
+				"accounts": ["980195619968"],
+				"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+			}
+		},
+		"tgw": {
+			"enabled": true,
+			"asn": 64521,
+			"cidr": "10.200.32.0/19",
+			"peer": true,
+			"tables": {
+				"pre": {
+					"associations": [
+						"cb-labvantage-prod", "cb-labvantage-test",
+						"cb-eln-us-prod", "cb-dsb-database",
+						"vpn-idc"
+					],
+					"routes": {
+						"*": "hub",
+						"tgw": "blackhole"
+					}
+				},
+				"post": {
+					"associations": ["hub", "peer"],
+					"propagations": [
+						"cb-labvantage-prod", "cb-labvantage-test",
+						"cb-eln-us-prod", "cb-dsb-database",
+						"vpn-idc"
+					],
+					"routes": {
+						"*": "peer"
+					}
+				}
+			}
+		}
+	},
+	"ap-east-1": {
+		"vpcs": {
+			"hub": {
+				"is_hub": true,
+				"cidr": "10.200.226.0/24",
+				"nat": { "enabled": true },
+				"igw": { "enabled": true },
+				"subnets": [[[4,8],[4,9]],[[2,0],[2,1]]]
+			},
+			"app-it-prod": {
+				"cidr": "10.200.0.0/24",
+				"accounts": ["014197011099"],
+				"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+			}
+		},
+		"tgw": {
+			"enabled": true,
+			"asn": 64522,
+			"cidr": "10.200.0.0/19",
+			"peer": true,
+			"tables": {
+				"pre": {
+					"associations": ["app-it-prod"],
+					"routes": {
+						"*": "hub",
+						"tgw": "blackhole"
+					}
+				},
+				"post": {
+					"associations": ["hub", "peer"],
+					"propagations": ["app-it-prod"],
+					"routes": {
+						"*": "peer"
+					}
+				}
+			}
+		}
+	},
+	"eu-central-1": {
+		"vpcs": {
+			"hub": {
+				"is_hub": true,
+				"cidr": "10.200.227.0/24",
+				"nat": { "enabled": true },
+				"igw": { "enabled": true },
+				"subnets": [[[4,8],[4,9]],[[2,0],[2,1]]]
+			}
+		},
+		"tgw": {
+			"enabled": true,
+			"asn": 64523,
+			"cidr": "10.200.96.0/19",
+			"peer": true,
+			"tables": {
+				"pre": {
+					"routes": {
+						"*": "hub",
+						"tgw": "blackhole"
+					}
+				},
+				"post": {
+					"associations": ["hub", "peer"],
+					"routes": {
+						"*": "peer"
+					}
+				}
+			}
+		}
+	},
+	"eu-west-2": {
+		"vpcs": {
+			"hub": {
+				"is_hub": true,
+				"cidr": "10.200.228.0/24",
+				"nat": { "enabled": true },
+				"igw": { "enabled": true },
+				"subnets": [[[4,8],[4,9]],[[2,0],[2,1]]]
+			},
+			"cb-shared-service": {
+				"cidr": "10.200.64.0/24",
+				"accounts": ["103242399734"],
+				"subnets": [[[4,12],[4,13]],[],[[2,0],[2,1]],[[3,4],[3,5]]]
+			}
+		},
+		"tgw": {
+			"enabled": true,
+			"asn": 64524,
+			"cidr": "10.200.64.0/19",
+			"peer": true,
+			"tables": {
+				"pre": {
+					"associations": ["cb-shared-service"],
+					"routes": {
+						"*": "hub",
+						"tgw": "blackhole"
+					}
+				},
+				"post": {
+					"associations": ["hub", "peer"],
+					"propagations": ["cb-shared-service"],
+					"routes": {
+						"*": "peer"
+					}
+				}
+			}
+		}
+	}
+}
