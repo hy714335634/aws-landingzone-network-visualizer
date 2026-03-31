@@ -40,7 +40,7 @@ import { useOverlayStore } from '../hooks/useOverlayStore';
 import { VpnNode, CgwNode, VgwNode, PrivateLinkNode } from './nodes/OverlayNodes';
 import { renderOverlayResources } from '../utils/overlayRenderer';
 import type { ReachabilityResult } from '../utils/reachabilityAnalyzer';
-import SearchOverlay from './SearchOverlay';
+// SearchOverlay available as standalone, but search is now embedded in Toolbar
 
 // ============================================
 // Change tracking types & logic
@@ -165,7 +165,6 @@ function NetworkFlowInner() {
     destId: string;
   } | null>(null);
 
-  const [showSearch, setShowSearch] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
 
   const overlayStore = useOverlayStore();
@@ -294,12 +293,6 @@ function NetworkFlowInner() {
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+K / Cmd+K → search
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        if (config) setShowSearch(prev => !prev);
-        return;
-      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         if (e.shiftKey) {
           e.preventDefault();
@@ -579,6 +572,14 @@ function NetworkFlowInner() {
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
         editorOpen={editorOpen}
+        config={config}
+        onCollapseAllTables={() => {
+          setNodes(ns => ns.map(n => n.type === 'tgw' ? { ...n, data: { ...n.data, collapseSignal: Date.now() } } : n));
+        }}
+        onExpandAllTables={() => {
+          setNodes(ns => ns.map(n => n.type === 'tgw' ? { ...n, data: { ...n.data, collapseSignal: -Date.now() } } : n));
+        }}
+        onSearchSelect={handleSearchSelect}
       />
 
       <input
@@ -724,11 +725,6 @@ function NetworkFlowInner() {
             />
           </ReactFlow>
         </div>
-      )}
-
-      {/* Search overlay (Ctrl+K) */}
-      {showSearch && config && (
-        <SearchOverlay config={config} onSelect={handleSearchSelect} onClose={() => setShowSearch(false)} />
       )}
 
       {/* Diff toggle */}

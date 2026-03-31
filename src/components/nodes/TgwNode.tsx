@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useState, useEffect } from 'react';
 import { Handle, Position, useReactFlow } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import { Network, ArrowRight, Ban, Link2, Server, Plug, Router, ChevronDown, ChevronRight } from 'lucide-react';
@@ -92,7 +92,18 @@ const getActualTarget = (key: string, target: string): string => {
 const TgwNode = memo(({ data, id }: NodeProps) => {
   const nodeData = data as unknown as TgwNodeData;
   const { setEdges } = useReactFlow();
-  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  // Default: all tables expanded
+  const allTableNames = nodeData.tables ? Object.keys(nodeData.tables) : [];
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(() => new Set(allTableNames));
+
+  // Respond to collapse/expand signal from parent
+  const collapseSignal = (data as Record<string, unknown>).collapseSignal as number | undefined;
+  useEffect(() => {
+    if (collapseSignal === undefined) return;
+    if (collapseSignal > 0) setExpandedTables(new Set()); // collapse all
+    else if (collapseSignal < 0) setExpandedTables(new Set(allTableNames)); // expand all
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapseSignal]);
 
   // 从节点 ID 提取 regionId (格式: regionId-tgw)
   const regionId = id.replace('-tgw', '');
