@@ -136,7 +136,7 @@ export interface ResolverRuleConfig {
 export interface ResolverConfig {
   in?: ResolverEndpointConfig;
   out?: ResolverEndpointConfig;
-  rules?: ResolverRuleConfig[];
+  rules?: Record<string, ResolverRuleConfig>;
 }
 
 export interface DxConfig {

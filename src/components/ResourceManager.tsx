@@ -601,7 +601,7 @@ function ResolverPropertyEditor({ config, resolver, onUpdate, onDelete }: {
     inGroups: resolver.in?.groups?.join(', ') || '',
     outVpc: resolver.out?.vpc || '',
     outGroups: resolver.out?.groups?.join(', ') || '',
-    rules: (resolver.rules || []).map(r => `${r.domain || ''}|${r.ips?.join(',') || ''}|${r.type || 'FORWARD'}|${r.vpcs?.join(',') || ''}`).join('\n'),
+    rules: Object.entries(resolver.rules || {}).map(([name, r]) => `${name}|${r.domain || ''}|${r.ips?.join(',') || ''}|${r.type || 'FORWARD'}|${r.vpcs?.join(',') || ''}`).join('\n'),
   });
 
   const handleApply = () => {
@@ -609,17 +609,23 @@ function ResolverPropertyEditor({ config, resolver, onUpdate, onDelete }: {
     newConfig.resolver = {
       in: form.inVpc ? { vpc: form.inVpc, groups: form.inGroups.split(',').map(s => s.trim()).filter(Boolean) } : undefined,
       out: form.outVpc ? { vpc: form.outVpc, groups: form.outGroups.split(',').map(s => s.trim()).filter(Boolean) } : undefined,
-      rules: form.rules.split('\n').filter(l => l.trim()).map(line => {
-        const [domain, ips, type, vpcs] = line.split('|');
-        return {
-          domain: domain?.trim(),
-          ips: ips?.split(',').map(s => s.trim()).filter(Boolean),
-          type: type?.trim() || 'FORWARD',
-          vpcs: vpcs?.split(',').map(s => s.trim()).filter(Boolean),
-        };
-      }),
+      rules: (() => {
+        const rulesMap: Record<string, { domain?: string; ips?: string[]; type?: string; vpcs?: string[] }> = {};
+        form.rules.split('\n').filter(l => l.trim()).forEach(line => {
+          const [name, domain, ips, type, vpcs] = line.split('|');
+          if (name?.trim()) {
+            rulesMap[name.trim()] = {
+              domain: domain?.trim(),
+              ips: ips?.split(',').map(s => s.trim()).filter(Boolean),
+              type: type?.trim() || 'FORWARD',
+              vpcs: vpcs?.split(',').map(s => s.trim()).filter(Boolean),
+            };
+          }
+        });
+        return Object.keys(rulesMap).length > 0 ? rulesMap : undefined;
+      })(),
     };
-    if (newConfig.resolver.rules?.length === 0) delete newConfig.resolver.rules;
+    if (!newConfig.resolver.rules) delete newConfig.resolver.rules;
     onUpdate(newConfig);
   };
 
@@ -638,7 +644,7 @@ function ResolverPropertyEditor({ config, resolver, onUpdate, onDelete }: {
           <input className="form-input" value={form.outVpc} onChange={e => setForm(p => ({ ...p, outVpc: e.target.value }))} /></div>
         <div className="form-group"><label>{t('Outbound Groups (逗号分隔)', 'Outbound Groups (comma separated)')}</label>
           <input className="form-input" value={form.outGroups} onChange={e => setForm(p => ({ ...p, outGroups: e.target.value }))} /></div>
-        <div className="form-group"><label>{t('Rules (每行: domain|ips|type|vpcs)', 'Rules (per line: domain|ips|type|vpcs)')}</label>
+        <div className="form-group"><label>{t('Rules (每行: name|domain|ips|type|vpcs)', 'Rules (per line: name|domain|ips|type|vpcs)')}</label>
           <textarea className="form-input rm-textarea" value={form.rules}
             placeholder="example.com|10.0.0.2,10.0.1.2|FORWARD|hub,spoke"
             onChange={e => setForm(p => ({ ...p, rules: e.target.value }))} /></div>
